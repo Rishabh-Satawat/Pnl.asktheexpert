@@ -1,5 +1,3 @@
-# System packages required for Playwright Chromium (PDF generation)
-# Streamlit Cloud installs these via apt before pip
 libnss3
 libnspr4
 libatk1.0-0
