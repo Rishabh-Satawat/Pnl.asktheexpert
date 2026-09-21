@@ -157,6 +157,64 @@ _PROMPT_MAP: Dict[str, str] = {
     "ZERODHA_VIRTUAL_CONTRACT_NOTE": ZERODHA_VIRTUAL_CONTRACT_NOTE_PROMPT,
 }
 
+UNIVERSAL_EXTRACTION_PROMPT = """You are an expert Indian F&O quant analyst. Analyze this screenshot carefully.
+
+It may be one of:
+1. Tradetron strategy deployment card (shows strategy name, multiplier, P&L, capital deployed)
+2. Zerodha Kite positions table (shows instrument symbols, qty, avg price, LTP, P&L columns)
+3. Zerodha virtual contract note / charges popup (shows brokerage, STT, GST, stamp duty totals)
+
+Return a single JSON object with ALL of the following fields. Fill what you can see, use [] or null for sections not visible:
+
+{
+  "screen_type": "TRADETRON_STRATEGY_CARD|ZERODHA_KITE_POSITIONS|ZERODHA_VIRTUAL_CONTRACT_NOTE|UNKNOWN",
+  "broker_identified": "TRADETRON|ZERODHA|OTHER|null",
+  "overall_confidence": <float 0.0-1.0>,
+  "strategy_cards": [
+    {
+      "strategy_name": "<string>",
+      "deployment_status": "LIVE_AUTO|EXITED|PARTIAL|OTHER",
+      "multiplier_x": <int, default 1>,
+      "booked_gross_pnl": <float>,
+      "capital_deployed_allocated": <float>,
+      "entry_timestamp_ist": "<string or null>",
+      "exit_timestamp_ist": "<string or null>",
+      "legs": []
+    }
+  ],
+  "kite_positions": [
+    {
+      "vendor_symbol": "<string>",
+      "product_type": "MIS|NRML|CNC",
+      "quantity": <int>,
+      "avg_price": <float>,
+      "ltp": <float>,
+      "pnl": <float>,
+      "side": "BUY|SELL",
+      "exchange": "NSE|BSE"
+    }
+  ],
+  "contract_note_charges": {
+    "brokerage_amount": <float or null>,
+    "exchange_turnover_fee_amount": <float or null>,
+    "securities_transaction_tax_stt": <float or null>,
+    "sebi_turnover_charges": <float or null>,
+    "stamp_duty": <float or null>,
+    "gst": <float or null>,
+    "total_charges_grand_total": <float or null>
+  },
+  "processing_status": "PARSED|PARTIAL|NEEDS_REVIEW"
+}
+
+RULES:
+- Extract every visible row from tables
+- For Tradetron: strategy_name is the main heading of each card. booked_gross_pnl is the P&L shown. capital_deployed_allocated is the capital/margin amount shown.
+- For Kite positions: extract each row as a separate object in kite_positions
+- For contract note: extract each charge line item
+- If a field is not visible, use null (not 0)
+- Return ONLY the JSON object, no markdown fences, no explanation
+"""
+
 # Classification prompt used when auto-detecting source type
 _CLASSIFY_PROMPT = """Look at this screenshot and classify it as one of:
 - TRADETRON_STRATEGY_CARD (Tradetron strategy deployment cards)
@@ -262,6 +320,7 @@ class GeminiScreenshotParser:
         self,
         image_path_or_bytes: str | bytes | Path,
         hint_source_type: str | None = None,
+        filename: str = "",
     ) -> dict:
         """Parse a screenshot and return a structured dict.
 
@@ -269,67 +328,65 @@ class GeminiScreenshotParser:
         1. Classify source_type
         2. Select prompt template
         3. Call Gemini with image + prompt (JSON response)
-        4. Validate via Pydantic; retry ONCE on failure
+        4. Retry ONCE on failure
         5. Return parsed dict
         """
         source_type = self.classify_source_type(image_path_or_bytes, hint=hint_source_type)
-        prompt = _PROMPT_MAP.get(source_type, TRADETRON_STRATEGY_CARDS_PROMPT)
+        if source_type == "UNKNOWN":
+            prompt = UNIVERSAL_EXTRACTION_PROMPT
+        else:
+            prompt = _PROMPT_MAP.get(source_type, UNIVERSAL_EXTRACTION_PROMPT)
 
         def _call_gemini(extra_instruction: str = "") -> dict:
             model = self._get_model()
-            image_part = self._prepare_image_part(image_path_or_bytes)
+            image_part = self._prepare_image_part(image_path_or_bytes, filename=filename)
             full_prompt = prompt + extra_instruction
             response = model.generate_content([full_prompt, image_part])
             text = response.text.strip()
-            # Strip markdown code fences if present
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            # Strip markdown code fences
+            if text.startswith("```json"):
+                text = text[7:]
+            elif text.startswith("```"):
+                text = text[3:]
             if text.endswith("```"):
                 text = text[:-3]
+            text = text.strip()
             return json.loads(text)
 
         return self._parse_with_retry(_call_gemini, source_type)
 
-    def _parse_with_retry(
-        self,
-        callable_fn,
-        source_type: str,
-    ) -> dict:
-        """Call callable_fn, validate with Pydantic, retry once on failure."""
-        from src.models.pydantic_schemas import GeminiParseEnvelope
-
+    def _parse_with_retry(self, callable_fn, source_type: str) -> dict:
+        """Call callable_fn, retry once on JSON parse failure."""
+        last_exc = None
         for attempt in range(2):
             try:
                 extra = ""
                 if attempt == 1:
                     extra = (
-                        "\n\nPREVIOUS ATTEMPT FAILED VALIDATION. "
-                        "Please return strictly valid JSON matching the schema exactly. "
-                        "Ensure all required fields are present and correctly typed."
+                        "\n\nPREVIOUS ATTEMPT FAILED. "
+                        "Return ONLY valid JSON, no markdown, no explanation. "
+                        "Match the schema exactly."
                     )
-                raw = callable_fn(extra)
-                # Validate through Pydantic
-                envelope = GeminiParseEnvelope(**raw)
-                return envelope.model_dump()
+                result = callable_fn(extra)
+                if isinstance(result, dict):
+                    return result
             except DependenciesMissingError:
                 raise
-            except Exception:
-                if attempt == 1:
-                    # Second failure - return safe fallback
-                    return {
-                        "screen_type": source_type,
-                        "overall_confidence": 0.5,
-                        "processing_status": "NEEDS_REVIEW",
-                        "strategy_cards": [],
-                        "kite_positions": [],
-                        "contract_note_charges": None,
-                        "execution_rows": [],
-                        "broker_identified": None,
-                        "visible_underlying_levels": {},
-                        "visible_margin_hud": None,
-                    }
-        # Should not reach here, but just in case
-        return {}  # pragma: no cover
+            except Exception as exc:
+                last_exc = exc
+        # Both attempts failed - return safe fallback
+        return {
+            "screen_type": source_type,
+            "overall_confidence": 0.0,
+            "processing_status": "PARSE_FAILED",
+            "strategy_cards": [],
+            "kite_positions": [],
+            "contract_note_charges": None,
+            "execution_rows": [],
+            "broker_identified": None,
+            "visible_underlying_levels": {},
+            "_error": str(last_exc),
+        }
 
     # ------------------------------------------------------------------
     # Confidence classification
@@ -408,7 +465,7 @@ class GeminiScreenshotParser:
     # Batch parse entry point (used by Streamlit UI)
     # ------------------------------------------------------------------
 
-    def parse_screenshots(self, image_bytes_list: List[bytes]) -> Dict[str, Any]:
+    def parse_screenshots(self, image_bytes_list: List[bytes], filenames: List[str] | None = None) -> Dict[str, Any]:
         """Parse a list of screenshot byte payloads and merge results.
 
         Returns a dict with keys:
@@ -420,9 +477,10 @@ class GeminiScreenshotParser:
         strategy_cards: List[dict] = []
         contract_note: Optional[dict] = None
 
-        for img_bytes in image_bytes_list:
+        for i, img_bytes in enumerate(image_bytes_list):
+            fname = (filenames[i] if filenames and i < len(filenames) else "")
             try:
-                result = self.parse_image(img_bytes)
+                result = self.parse_image(img_bytes, filename=fname)
             except DependenciesMissingError:
                 raise
             except Exception:
@@ -449,10 +507,23 @@ class GeminiScreenshotParser:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _prepare_image_part(image_path_or_bytes: str | bytes | Path):
+    def _prepare_image_part(image_path_or_bytes: str | bytes | Path, filename: str = ""):
         """Convert file path or raw bytes into a format suitable for Gemini."""
         if isinstance(image_path_or_bytes, bytes):
-            return {"mime_type": "image/png", "data": image_path_or_bytes}
+            data = image_path_or_bytes
+            # Detect MIME from magic bytes
+            if data[:3] == b'\xff\xd8\xff':
+                mime = "image/jpeg"
+            elif data[:4] == b'\x89PNG':
+                mime = "image/png"
+            elif data[:4] == b'%PDF':
+                mime = "application/pdf"
+            elif filename:
+                ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "pdf": "application/pdf"}.get(ext, "image/png")
+            else:
+                mime = "image/png"
+            return {"mime_type": mime, "data": data}
         path = Path(image_path_or_bytes)
         suffix = path.suffix.lower()
         mime = {
@@ -461,6 +532,7 @@ class GeminiScreenshotParser:
             ".jpeg": "image/jpeg",
             ".webp": "image/webp",
             ".gif": "image/gif",
+            ".pdf": "application/pdf",
         }.get(suffix, "image/png")
         with open(path, "rb") as f:
             data = f.read()

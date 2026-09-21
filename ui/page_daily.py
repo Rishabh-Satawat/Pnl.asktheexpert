@@ -100,8 +100,9 @@ def render_daily_processing() -> None:
 
                 with st.spinner("Calling Gemini Vision... This may take 10-30 seconds."):
                     parser = GeminiScreenshotParser(api_key=gemini_key)
+                    filenames = [f.name for f in uploaded_files]
                     image_bytes_list = [f.read() for f in uploaded_files]
-                    result = parser.parse_screenshots(image_bytes_list)
+                    result = parser.parse_screenshots(image_bytes_list, filenames=filenames)
 
                 positions = result.get("positions", [])
                 strategy_cards = result.get("strategy_cards", [])
@@ -116,6 +117,10 @@ def render_daily_processing() -> None:
 
                 st.session_state["staging_data"] = staging_df
                 st.session_state["gemini_result"] = result
+
+                with st.expander("🔍 Debug: Raw Gemini Output", expanded=False):
+                    st.json(result)
+                    st.caption(f"Positions found: {len(result.get('positions', []))}, Strategy cards found: {len(result.get('strategy_cards', []))}")
 
                 if staging_df is not None and not staging_df.empty:
                     st.success(
