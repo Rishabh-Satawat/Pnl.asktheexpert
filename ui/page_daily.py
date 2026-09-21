@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import traceback
+from datetime import date
+
 try:
     import streamlit as st
 except ImportError:  # pragma: no cover
@@ -18,6 +22,10 @@ def render_daily_processing() -> None:
 
     st.markdown('<div class="accent-bar"></div>', unsafe_allow_html=True)
     st.title("Daily Processing")
+
+    # ── Date Picker ───────────────────────────────────────────────
+    report_date = st.date_input("Trading Date", value=date.today())
+    st.session_state["report_date"] = report_date
 
     # ── Screenshot Upload ─────────────────────────────────────────
     st.subheader("1. Upload Source Screenshots")
@@ -43,22 +51,15 @@ def render_daily_processing() -> None:
                 unsafe_allow_html=True,
             )
 
-    # ── Gemini key check / manual fallback ────────────────────────
-    import os
-
+    # ── Gemini key check ──────────────────────────────────────────
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if not gemini_key:
-        # Try Streamlit secrets
         try:
             gemini_key = st.secrets.get("GEMINI_API_KEY", "")
         except Exception:
             pass
 
-    if not gemini_key:
-        st.info(
-            "Gemini API key not configured. You can set it in **Settings & Knowledge Base** page, "
-            "or use manual CSV upload below."
-        )
+    def _show_manual_csv_fallback():
         st.subheader("Manual CSV Upload")
         csv_file = st.file_uploader("Upload staging CSV", type=["csv"], key="manual_csv")
         if csv_file and pd is not None:
@@ -74,6 +75,70 @@ def render_daily_processing() -> None:
             file_name="staging_template.csv",
             mime="text/csv",
         )
+
+    if not gemini_key:
+        st.info(
+            "Gemini API key not configured. You can set it in **Settings & Knowledge Base** page, "
+            "or use manual CSV upload below."
+        )
+        _show_manual_csv_fallback()
+    elif uploaded_files:
+        # ── Extract button ────────────────────────────────────────
+        st.markdown("")
+        extract_clicked = st.button(
+            "🔍 Extract Data from Screenshots",
+            type="primary",
+            key="btn_extract_screenshots",
+            help="Send uploaded screenshots to Gemini Vision AI to extract trade data",
+        )
+        if extract_clicked:
+            st.session_state["extract_clicked"] = True
+
+        if st.session_state.get("extract_clicked"):
+            try:
+                from src.gemini_parser import GeminiScreenshotParser, DependenciesMissingError
+
+                with st.spinner("Calling Gemini Vision... This may take 10-30 seconds."):
+                    parser = GeminiScreenshotParser(api_key=gemini_key)
+                    image_bytes_list = [f.read() for f in uploaded_files]
+                    result = parser.parse_screenshots(image_bytes_list)
+
+                positions = result.get("positions", [])
+                strategy_cards = result.get("strategy_cards", [])
+                contract_note = result.get("contract_note", {})
+
+                if positions:
+                    staging_df = pd.DataFrame(positions) if pd is not None else None
+                elif strategy_cards:
+                    staging_df = pd.DataFrame(strategy_cards) if pd is not None else None
+                else:
+                    staging_df = pd.DataFrame() if pd is not None else None
+
+                st.session_state["staging_data"] = staging_df
+                st.session_state["gemini_result"] = result
+
+                if staging_df is not None and not staging_df.empty:
+                    st.success(
+                        f"✅ Extracted {len(staging_df)} rows from {len(uploaded_files)} screenshot(s). "
+                        "Review and edit below before running the pipeline."
+                    )
+                else:
+                    st.warning(
+                        "Gemini processed the screenshots but found no position or strategy card rows. "
+                        "Try manual CSV upload or check the screenshot quality."
+                    )
+                    _show_manual_csv_fallback()
+
+                # Reset flag so button can be clicked again if needed
+                st.session_state["extract_clicked"] = False
+
+            except Exception as exc:
+                st.error(f"OCR failed: {exc}")
+                with st.expander("Traceback"):
+                    st.code(traceback.format_exc())
+                _show_manual_csv_fallback()
+    else:
+        st.caption("Upload screenshots above, then click **Extract Data from Screenshots**.")
 
     # ── Staging Review ────────────────────────────────────────────
     st.subheader("2. Staging Review")
@@ -106,7 +171,8 @@ def render_daily_processing() -> None:
             if staging_df is None or (pd is not None and staging_df.empty):
                 st.warning("No staging data to process. Upload screenshots or a CSV first.")
             else:
-                _run_real_pipeline(staging_df)
+                gemini_result = st.session_state.get("gemini_result", {})
+                _run_real_pipeline(staging_df, gemini_result=gemini_result)
 
     # ── Results Tabs ──────────────────────────────────────────────
     pipeline_result = st.session_state.get("pipeline_result")
@@ -152,10 +218,12 @@ def render_daily_processing() -> None:
 # Real pipeline runner
 # ---------------------------------------------------------------------------
 
-def _run_real_pipeline(staging_df) -> None:
+def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
     """Instantiate orchestrator, run pipeline, store result in session_state."""
     import os
     from datetime import date
+    if gemini_result is None:
+        gemini_result = {}
     try:
         from dotenv import load_dotenv
         load_dotenv()
@@ -239,6 +307,8 @@ def _run_real_pipeline(staging_df) -> None:
         matched_df = s5.dataframes.get("matched_df", _pd.DataFrame())
         strategies_df = s3.dataframes.get("strategy_cards_df", _pd.DataFrame())
         cn_charges = s2.dataframes.get("contract_note_charges")
+        if cn_charges is None:
+            cn_charges = gemini_result.get("contract_note")
         s6 = orchestrator.stage_6_compute_charges(matched_df, strategies_df, contract_note_charges=cn_charges)
 
         # ── Stage 7 ──────────────────────────────────────────────

@@ -405,6 +405,46 @@ class GeminiScreenshotParser:
             }
 
     # ------------------------------------------------------------------
+    # Batch parse entry point (used by Streamlit UI)
+    # ------------------------------------------------------------------
+
+    def parse_screenshots(self, image_bytes_list: List[bytes]) -> Dict[str, Any]:
+        """Parse a list of screenshot byte payloads and merge results.
+
+        Returns a dict with keys:
+            "positions"       – list of dicts (from Zerodha kite_positions)
+            "strategy_cards"  – list of dicts (from Tradetron strategy_cards)
+            "contract_note"   – dict of charges (from contract note, or None)
+        """
+        positions: List[dict] = []
+        strategy_cards: List[dict] = []
+        contract_note: Optional[dict] = None
+
+        for img_bytes in image_bytes_list:
+            try:
+                result = self.parse_image(img_bytes)
+            except DependenciesMissingError:
+                raise
+            except Exception:
+                continue
+
+            kite_pos = result.get("kite_positions") or []
+            positions.extend(kite_pos)
+
+            sc = result.get("strategy_cards") or []
+            strategy_cards.extend(sc)
+
+            cn = result.get("contract_note_charges")
+            if cn and contract_note is None:
+                contract_note = cn
+
+        return {
+            "positions": positions,
+            "strategy_cards": strategy_cards,
+            "contract_note": contract_note,
+        }
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
