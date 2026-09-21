@@ -153,6 +153,13 @@ class FOCostCalculator:
         sell_price = float(sell_price)
         lot_size = int(lot_size)
         lots = int(lots)
+
+        # Exchange fallback guard: infer from context if None/empty
+        if not exchange:
+            exchange = "NSE"
+        exchange = str(exchange).upper().strip()
+        if exchange not in ("NSE", "BSE"):
+            exchange = "NSE"
         qty = lot_size * lots
         buy_premium = qty * buy_price
         sell_premium = qty * sell_price

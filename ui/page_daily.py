@@ -96,7 +96,11 @@ def render_daily_processing() -> None:
 
         if st.session_state.get("extract_clicked"):
             try:
-                from src.gemini_parser import GeminiScreenshotParser, DependenciesMissingError
+                from src.gemini_parser import (
+                    GeminiScreenshotParser,
+                    DependenciesMissingError,
+                    GeminiAuthError,
+                )
 
                 with st.spinner("Calling Gemini Vision... This may take 10-30 seconds."):
                     parser = GeminiScreenshotParser(api_key=gemini_key)
@@ -104,11 +108,15 @@ def render_daily_processing() -> None:
                     image_bytes_list = [f.read() for f in uploaded_files]
                     result = parser.parse_screenshots(image_bytes_list, filenames=filenames)
 
+                executions = result.get("executions", [])
                 positions = result.get("positions", [])
                 strategy_cards = result.get("strategy_cards", [])
                 contract_note = result.get("contract_note", {})
 
-                if positions:
+                # Priority: Tradetron executions > Kite positions > strategy cards
+                if executions:
+                    staging_df = pd.DataFrame(executions) if pd is not None else None
+                elif positions:
                     staging_df = pd.DataFrame(positions) if pd is not None else None
                 elif strategy_cards:
                     staging_df = pd.DataFrame(strategy_cards) if pd is not None else None
@@ -117,14 +125,39 @@ def render_daily_processing() -> None:
 
                 st.session_state["staging_data"] = staging_df
                 st.session_state["gemini_result"] = result
+                st.session_state["strategy_cards_extracted"] = strategy_cards
+                st.session_state["contract_note_extracted"] = contract_note
 
                 with st.expander("🔍 Debug: Raw Gemini Output", expanded=False):
                     st.json(result)
-                    st.caption(f"Positions found: {len(result.get('positions', []))}, Strategy cards found: {len(result.get('strategy_cards', []))}")
+                    st.caption(
+                        f"Executions: {len(executions)} | "
+                        f"Kite positions: {len(positions)} | "
+                        f"Strategy cards: {len(strategy_cards)}"
+                    )
+
+                # Show strategy card info box when cards were found
+                if strategy_cards:
+                    st.info("**Strategy Cards Detected:**")
+                    for sc in strategy_cards:
+                        name = sc.get("strategy_name", "Unknown Strategy")
+                        capital = sc.get("capital_deployed_allocated", 0)
+                        multiplier = sc.get("multiplier_x", 1)
+                        status = sc.get("deployment_status", "")
+                        pnl = sc.get("booked_gross_pnl", 0)
+                        roi = sc.get("card_roi_pct", 0)
+                        capital_l = f"₹{capital/100000:.2f}L" if capital else "N/A"
+                        pnl_str = f"₹{pnl:+,.0f}" if pnl else "N/A"
+                        st.markdown(
+                            f"**{name}** | {multiplier}x | Capital: {capital_l} | "
+                            f"Status: {status} | Booked P&L: {pnl_str} ({roi:+.2f}%)"
+                        )
 
                 if staging_df is not None and not staging_df.empty:
+                    total_rows = len(staging_df)
+                    source = "execution" if executions else ("position" if positions else "strategy card")
                     st.success(
-                        f"✅ Extracted {len(staging_df)} rows from {len(uploaded_files)} screenshot(s). "
+                        f"✅ Extracted {total_rows} {source} row(s) from {len(uploaded_files)} screenshot(s). "
                         "Review and edit below before running the pipeline."
                     )
                 else:
@@ -137,11 +170,24 @@ def render_daily_processing() -> None:
                 # Reset flag so button can be clicked again if needed
                 st.session_state["extract_clicked"] = False
 
+            except GeminiAuthError as auth_exc:
+                st.error("❌ Gemini API Error - Cannot Extract Data")
+                st.error(auth_exc.user_action)
+                with st.expander("Technical Details"):
+                    st.code(f"{auth_exc.error_code}: {auth_exc.original_error}")
+                _show_manual_csv_fallback()
+                st.session_state["extract_clicked"] = False
+            except DependenciesMissingError as dep_exc:
+                st.error("❌ Configuration Error")
+                st.error(dep_exc.user_action)
+                _show_manual_csv_fallback()
+                st.session_state["extract_clicked"] = False
             except Exception as exc:
-                st.error(f"OCR failed: {exc}")
+                st.error(f"❌ Unexpected Error: {exc}")
                 with st.expander("Traceback"):
                     st.code(traceback.format_exc())
                 _show_manual_csv_fallback()
+                st.session_state["extract_clicked"] = False
     else:
         st.caption("Upload screenshots above, then click **Extract Data from Screenshots**.")
 
@@ -297,6 +343,13 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
         # ── Stage 3 ──────────────────────────────────────────────
         _update_progress(progress_bar, status_text, stage_labels, 2)
         s3 = orchestrator.stage_3_review_staging(s2, operator_edits_df=staging_df, operator_approve_flag=True)
+
+        # Inject strategy cards extracted by Gemini into stage_3 dataframes
+        # so stage_6 and stage_7 can compute capital-deployed ROI
+        _sc_extracted = st.session_state.get("strategy_cards_extracted", [])
+        if _sc_extracted and "strategy_cards_df" not in s3.dataframes:
+            import pandas as _pd2
+            s3.dataframes["strategy_cards_df"] = _pd2.DataFrame(_sc_extracted)
 
         # ── Stage 4 ──────────────────────────────────────────────
         _update_progress(progress_bar, status_text, stage_labels, 3)

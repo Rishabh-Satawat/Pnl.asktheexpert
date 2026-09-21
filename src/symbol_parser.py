@@ -225,6 +225,65 @@ def parse_indian_symbol(
             f"Symbol starts with digit, not a valid Indian F&O symbol: {raw!r}"
         )
 
+    # ── Pattern 0: Tradetron OPTIDX/FUTIDX/OPTSTK/FUTSTK vendor symbol format ──
+    # e.g. OPTIDX_SENSEX_24SEP2026_PE_74300
+    #      FUTIDX_BANKNIFTY_25SEP2026_FUT
+    #      OPTSTK_TCS_30OCT2026_CE_3500
+    _TRADETRON_VENDOR_RE = re.compile(
+        r"^(OPTIDX|FUTIDX|OPTSTK|FUTSTK)_([A-Z0-9]+)_(\d{2})([A-Z]{3})(\d{4})_(CE|PE|FUT)(?:_(\d+))?$",
+        re.IGNORECASE,
+    )
+    m0 = _TRADETRON_VENDOR_RE.match(raw.upper())
+    if m0:
+        inst_prefix = m0.group(1).upper()   # OPTIDX / FUTIDX / OPTSTK / FUTSTK
+        underlying  = m0.group(2).upper()   # SENSEX / BANKNIFTY / TCS
+        day         = int(m0.group(3))      # 24
+        mon_str     = m0.group(4).upper()   # SEP
+        year        = int(m0.group(5))      # 2026
+        suffix      = m0.group(6).upper()   # CE / PE / FUT
+        strike_str  = m0.group(7)           # "74300" or None for FUT
+
+        month_int = _MONTH_NAME_SHORT.get(mon_str)
+        if month_int is None:
+            raise SymbolParseError(f"Unknown month abbreviation {mon_str!r} in {raw!r}")
+
+        strike = float(strike_str) if strike_str else 0.0
+        expiry = _lookup_expiry_date(underlying, year % 100, month_int, day, market_knowledge)
+
+        # Infer exchange and segment from underlying
+        u = underlying.upper()
+        if "SENSEX" in u or inst_prefix in ("OPTIDX", "FUTIDX") and "SENSEX" in u:
+            exchange, segment = "BSE", "SENSEX"
+        elif "BANKNIFTY" in u:
+            exchange, segment = "NSE", "BANKNIFTY"
+        elif "FINNIFTY" in u:
+            exchange, segment = "NSE", "FINNIFTY"
+        elif "MIDCPNIFTY" in u or "MIDCAP" in u:
+            exchange, segment = "NSE", "MIDCPNIFTY"
+        elif "NIFTY" in u:
+            exchange, segment = "NSE", "NIFTY"
+        else:
+            # Stock options/futures — NSE by default
+            exchange, segment = "NSE", underlying
+
+        # Map inst_prefix to instrument_type
+        instrument_type_map = {
+            "OPTIDX": "OPTIDX", "FUTIDX": "FUTIDX",
+            "OPTSTK": "OPTSTK", "FUTSTK": "FUTSTK",
+        }
+        instrument_type = instrument_type_map.get(inst_prefix, inst_prefix)
+
+        return {
+            "underlying": underlying,
+            "expiry_date": expiry,
+            "strike_price": strike,
+            "option_type": suffix,
+            "instrument_type": instrument_type,
+            "exchange": exchange,
+            "segment": segment,
+            "raw_symbol": raw,
+        }
+
     # -------- Pattern 5: Tradetron space-separated display format --------
     if " " in raw and re.search(r"\b(CE|PE|FUT|CALL|PUT)\b", raw, re.IGNORECASE):
         return _parse_tradetron_display(raw, market_knowledge, as_of_year)
