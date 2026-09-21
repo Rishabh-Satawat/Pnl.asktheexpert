@@ -1,0 +1,15 @@
+# Exclude from Docker build context
+.env
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+data/*.db
+data/*.parquet
+cache
+.git
+.gitignore
+.streamlit/secrets.toml
+tests
+*.md

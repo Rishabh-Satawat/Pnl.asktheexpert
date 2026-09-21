@@ -1,0 +1,2 @@
+fixture_name,lot_size,lots,buy_price,sell_price,exchange,brokerage_expected,stt_expected,stamp_expected,slippage_per_point,slippage_expected,exchange_fee_note,gst_note,total_charges_lower,total_charges_upper
+AC1_SENSEX_BULL_CALL_LEG,20,1,100,120,BSE,40.00,2.40,0.06,0.10,4.00,BSE 0.0325% * turnover 4400 = 1.43,18% GST on (40 + 1.43 + 0.0044) = 7.46,55.30,55.40

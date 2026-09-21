@@ -1,0 +1,28 @@
+# Private Quant Desk P&L Engine - Docker Compose (VPS deployment)
+# Usage: docker compose up -d --build
+services:
+  quant-desk:
+    build: .
+    container_name: quant-desk
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8501:8501"   # bound to localhost; Nginx proxies externally
+    env_file:
+      - .env
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      # Supabase and Gemini are loaded from .env file (env_file above).
+      # Ensure .env has SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY, APP_ACCESS_PASSWORD.
+    volumes:
+      - quant_desk_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  quant_desk_data:
+    driver: local

@@ -1,0 +1,4 @@
+report_date,strategy_name,manual_Gross_PnL_from_PDF,computed_Gross_PnL,delta_Gross_PnL_abs,manual_Net_PnL,computed_Net_PnL,delta_Net_PnL_abs,manual_Charges_Total,computed_Charges_Total,delta_Charges,manual_Brokerage,computed_Brokerage,manual_STT,computed_STT,manual_ROI_pct,computed_ROI_pct,capital_deployed,pass_fail,notes
+2026-09-03,Strategy 1,,,,,,,,,,,,,,,,,"Operator fills manual values from PDF then runs comparison"
+2026-09-03,Strategy 2,,,,,,,,,,,,,,,,,"Second strategy row"
+2026-09-03,Strategy 3,,,,,,,,,,,,,,,,,"Third strategy row"

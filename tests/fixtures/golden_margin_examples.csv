@@ -1,0 +1,5 @@
+archetype,underlying,underlying_price,option_type,strike,premium_per_point,qty,lot_size,lots,exchange,side,is_spread,spread_max_loss_per_unit,spread_net_premium_flow_per_unit,expected_audit_min,expected_audit_max
+Long_NIFTY_ATM_CE,NIFTY,25000,CE,25000,250,25,25,1,NSE,BUY,false,,,6250,6250
+Short_BANKNIFTY_PE,BANKNIFTY,52000,PE,52000,400,15,15,1,NSE,SELL,false,,,50000,210000
+SENSEX_Future,SENSEX,80000,FUT,80000,0,20,20,1,BSE,BUY,false,,,100000,280000
+SENSEX_Bull_Call_Spread,SENSEX,80000,CE,80000,300,20,20,1,BSE,BUY,true,500,-100,2000,10000

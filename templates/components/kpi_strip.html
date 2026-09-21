@@ -1,0 +1,41 @@
+<!-- KPI Strip: 6 tiles for Daily Founder P&L Report -->
+<div class="kpi-tiles-grid" style="
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 22px;
+">
+  {% for kpi in kpis %}
+  <div class="kpi-card" style="
+    background: rgba(18,31,61,0.72);
+    backdrop-filter: blur(18px) saturate(150%);
+    border: 1px solid rgba(99,102,241,0.22);
+    border-radius: 16px;
+    padding: 16px 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    transition: transform 0.18s ease;
+  ">
+    <div class="kpi-label" style="
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #94A3B8;
+      margin-bottom: 6px;
+      font-family: 'Inter', sans-serif;
+    ">{{ kpi.label }}</div>
+    <div class="kpi-value" style="
+      font-size: 22px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      color: {{ kpi.color }};
+    ">{{ kpi.value }}</div>
+    {% if kpi.subtitle %}
+    <div class="kpi-subtitle" style="
+      font-size: 10px;
+      color: #64748B;
+      margin-top: 4px;
+    ">{{ kpi.subtitle }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>

@@ -1,0 +1,81 @@
+<!-- Strategy Card: Glassmorphism card for each strategy run -->
+<div class="strategy-card" style="
+  background: rgba(18,31,61,0.72);
+  backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid rgba(99,102,241,0.22);
+  border-radius: 16px;
+  padding: 18px 20px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  margin-bottom: 14px;
+  page-break-inside: avoid;
+">
+  <!-- Header row -->
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+    <div>
+      <span class="strategy-name" style="
+        font-size: 15px;
+        font-weight: 600;
+        color: #F8FAFC;
+        font-family: 'Inter', sans-serif;
+      ">{{ strategy.name }}</span>
+      <!-- Multiplier chip -->
+      <span class="multiplier-chip" style="
+        display: inline-block;
+        background: linear-gradient(135deg, #6366F1, #A855F7);
+        color: #fff;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 20px;
+        margin-left: 8px;
+        font-family: 'JetBrains Mono', monospace;
+      ">{{ strategy.multiplier }}x</span>
+    </div>
+    <!-- Deployment status pill -->
+    <span class="status-pill" style="
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      background: {{ strategy.status_bg }};
+      color: {{ strategy.status_color }};
+    ">{{ strategy.deployment_status }}</span>
+  </div>
+
+  <!-- Metrics grid -->
+  <div style="
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  ">
+    <div>
+      <div style="color: #94A3B8; font-size: 10px; font-family: 'Inter', sans-serif;">Gross P&L</div>
+      <div style="color: {{ strategy.gross_color }}; font-weight: 600;">{{ strategy.gross_pnl }}</div>
+    </div>
+    <div>
+      <div style="color: #94A3B8; font-size: 10px; font-family: 'Inter', sans-serif;">Charges</div>
+      <div style="color: #EF4444; font-weight: 600;">{{ strategy.charges }}</div>
+    </div>
+    <div>
+      <div style="color: #94A3B8; font-size: 10px; font-family: 'Inter', sans-serif;">Net P&L</div>
+      <div style="color: {{ strategy.net_color }}; font-weight: 600;">{{ strategy.net_pnl }}</div>
+    </div>
+    <div>
+      <div style="color: #94A3B8; font-size: 10px; font-family: 'Inter', sans-serif;">Capital Deployed</div>
+      <div style="color: #E2E8F0; font-weight: 600;">{{ strategy.capital_deployed }}</div>
+    </div>
+    <div>
+      <div style="color: #94A3B8; font-size: 10px; font-family: 'Inter', sans-serif;">Net ROI</div>
+      <div style="color: {{ strategy.roi_color }}; font-weight: 600;">{{ strategy.net_roi }}</div>
+    </div>
+    <div>
+      <div style="color: #94A3B8; font-size: 10px; font-family: 'Inter', sans-serif;">Segment</div>
+      <div style="color: {{ strategy.segment_color }}; font-weight: 600;">{{ strategy.segment }}</div>
+    </div>
+  </div>
+</div>

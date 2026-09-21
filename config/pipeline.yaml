@@ -1,0 +1,49 @@
+pipeline:
+  version: "1.0.0-Production"
+  default_broker: "ZERODHA"
+  confidence_threshold_for_human_review: 0.85
+  default_slippage_per_point: 0.10
+  primary_roi_denominator: "CAPITAL_DEPLOYED_FROM_TRADETRON_OR_OPERATOR_REVIEW"
+  secondary_margin_metric_role: "AUDIT_ONLY_SEBI_SPAN_EXPOSURE"
+  charge_allocation_method: "PROPORTIONAL_PREMIUM_TURNOVER"
+  charge_allocation_alternatives: ["PROPORTIONAL_PREMIUM_TURNOVER", "EQUAL_PER_STRATEGY"]
+  mandatory_operator_review: true
+  operator_review_pause_on_yellow_rows: true
+  minimum_review_seconds_capital_deployed_verify: 5
+  match_policy: "FIFO_PER_STRATEGY_AND_SYMBOL_AND_DATE"
+  unmatched_legs_behaviour: "WARN_AND_STORE_AS_OPEN_POSITION"
+
+gemini:
+  provider: "google-gemini-1.5-flash"
+  retry_on_schema_failure: 1
+  response_mime_json: true
+  fallback_ocr_engine: "tesseract"
+  fallback_ocr_forces_review: true
+  request_timeout_seconds: 90
+
+dhan_integration:
+  enabled_if_keys_present_only: true
+  block_hot_path_import: true
+  lazy_import: true
+  base_url: "https://api.dhan.co/v2"
+  retry_attempts: 3
+  role: "OPTIONAL_SECONDARY_HELPER_NOT_BLOCKING"
+
+db:
+  sqlite_path: "data/quant_desk.db"
+  wal_mode: true
+  busy_timeout_seconds: 30
+  pending_write_parquet_dir: "data/cache"
+  dedupe_algorithm: "SHA256_BY_CONTENT"
+  upsert_mode: "transactional_all_or_nothing"
+
+pipeline_stage_names_ordered:
+  - "1. ingest_sources_dedupe"
+  - "2. gemini_multimodal_parse"
+  - "3. review_staging_checkpoint"
+  - "4. classify_symbols_normalize"
+  - "5. fifo_match_within_strategies"
+  - "6. compute_charges_allocate"
+  - "7. secondary_margin_roi_daily_kpis"
+  - "8. persist_sqlite_transactional"
+  - "9. rebuild_equity_curve"

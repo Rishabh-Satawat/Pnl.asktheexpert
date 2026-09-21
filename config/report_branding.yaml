@@ -1,0 +1,35 @@
+desk:
+  name: "QUANT DESK — PRIVATE ACCOUNTING"
+  short_name: "QuantDesk"
+  founder_salutation: "Dear Founder,"
+  report_from_email: ""
+  logo_path: "ui/branding/logo.png"
+  timezone: "Asia/Kolkata"
+  currency_symbol: "₹"
+  currency_code: "INR"
+  locale: "en-IN"
+  disclaimer_version_tag: "v1.0-FR13"
+
+report_defaults:
+  include_source_thumbnails: true
+  include_greeks_breakdown: true
+  include_methodology_appendix: true
+  strategy_cards_per_row: 2
+  excel_default_sheet_order: ["KPI Header", "Strategy Cards", "Trade Log", "Charges Reconciliation", "Appendix Methodology"]
+
+disclaimer:
+  text: |
+    CONFIDENTIAL — FOR INTERNAL FOUNDER AUDIT USE ONLY. This report is a private accounting
+    reconciliation artifact and is not financial advice, investment research, or a solicitation
+    to trade. Capital Deployed ROI figures use the allocation sourced from the Tradetron strategy
+    card screenshot / operator review. All charge line items labeled REALIZED_VIRTUAL_CONTRACT_NOTE
+    are exact extractions from the Zerodha Virtual Contract Note; FORMULA charges are estimates
+    computed per publicly available Zerodha / NSE / BSE / SEBI fee schedules and may differ by
+    rounding. All secondary SPAN+Exposure margin metrics are audit-only approximations computed
+    per SEBI-standard methodology and are not used for the founder ROI calculation. Always
+    reconcile against the official Zerodha contract note and ledger before making risk or
+    financial decisions. Past performance is not indicative of future results.
+  placement: "footer_every_page"
+  font_size_css: "10px"
+  bold: true
+  html_class: "disclaimer-footer"

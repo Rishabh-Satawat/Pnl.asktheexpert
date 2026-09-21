@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en-IN">
+<head>
+  <meta charset="UTF-8">
+  <title>Daily P&amp;L Report — <!-- REPORT_DATE_PLACEHOLDER --></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    /* CSS is populated by report_engine.py from design_system.yaml; placeholders only */
+    html, body { margin: 0; padding: 0; background: #0B1426; color: #E2E8F0; font-family: 'Inter', sans-serif; }
+    .page { padding: 18mm 14mm; }
+    .report-section { margin-bottom: 24px; page-break-inside: avoid; }
+    .disclaimer-footer { font-size: 10px; font-weight: 700; opacity: 0.85; border-top: 1px solid #1E3A5F; padding-top: 10px; margin-top: 24px; }
+    @media print {
+      .page { padding: 0; }
+      .strategy-card { page-break-inside: avoid; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- SECTION 1: HEADER & KPI STRIP (6 tiles) -->
+  <section id="section-header-kpi" class="report-section">
+    <div id="header-title">
+      <h1><!-- DESK_NAME --></h1>
+      <div class="sub">Daily Founder P&amp;L Report — <span id="report-date"><!-- REPORT_DATE_PLACEHOLDER --></span></div>
+    </div>
+    <div id="kpi-strip" class="kpi-tiles-grid">
+      <!-- KPI_TILE_TOTAL_NET_PNL -->
+      <!-- KPI_TILE_NET_ROI -->
+      <!-- KPI_TILE_WIN_LOSS_COUNT -->
+      <!-- KPI_TILE_TOTAL_CAPITAL_DEPLOYED -->
+      <!-- KPI_TILE_TXN_COST_DRAG -->
+      <!-- KPI_TILE_STRATEGY_COUNT -->
+    </div>
+  </section>
+
+  <!-- SECTION 2: STRATEGY BREAKDOWN CARDS (Tradetron-like) -->
+  <section id="section-strategy-cards" class="report-section">
+    <h2>Strategy Breakdown</h2>
+    <div id="strategy-cards-grid">
+      <!-- STRATEGY_CARD_1_PLACEHOLDER -->
+      <!-- STRATEGY_CARD_2_PLACEHOLDER -->
+      <!-- ... -->
+    </div>
+  </section>
+
+  <!-- SECTION 3: VISUAL ANALYTICS QUAD (3 charts) -->
+  <section id="section-analytics" class="report-section">
+    <h2>Visual Analytics</h2>
+    <div class="analytics-grid">
+      <div class="chart-panel">
+        <h3>Segment Contribution</h3>
+        <!-- CHART_SEGMENT_DONUT -->
+      </div>
+      <div class="chart-panel">
+        <h3>Gross vs Net P&amp;L</h3>
+        <!-- CHART_GROSS_NET_BARS -->
+      </div>
+      <div class="chart-panel chart-full">
+        <h3>Transaction Cost Waterfall</h3>
+        <!-- CHART_COST_WATERFALL -->
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 4: DETAILED TRADE & POSITION LOG -->
+  <section id="section-trade-log" class="report-section">
+    <h2>Detailed Trade &amp; Position Log</h2>
+    <div id="trade-log-table">
+      <!-- TRADE_LOG_TABLE -->
+    </div>
+  </section>
+
+  <!-- SECTION 5: CONTRACT NOTE RECONCILIATION -->
+  <section id="section-contract-note" class="report-section">
+    <h2>Contract Note Reconciliation</h2>
+    <div id="charges-reconciliation-table">
+      <!-- CHARGES_RECONCILIATION_TABLE -->
+    </div>
+    <div class="source-badges">
+      <!-- CHARGE_SOURCE_BADGES -->
+    </div>
+  </section>
+
+  <!-- SECTION 6: MANDATORY DISCLAIMER FOOTER -->
+  <section id="section-disclaimer" class="report-section">
+    <div class="disclaimer-footer">
+      <strong><!-- DISCLAIMER_TEXT_PLACEHOLDER --></strong>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

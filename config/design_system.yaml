@@ -1,0 +1,68 @@
+theme:
+  background_color: "#0B1426"
+  surface_color: "#121F3D"
+  surface_alt_color: "#182A4F"
+  accent_gradient_from: "#6366F1"
+  accent_gradient_via: "#A855F7"
+  accent_gradient_to: "#06B6D4"
+  divider_color: "#1E3A5F"
+
+typography:
+  heading_font: "Inter"
+  heading_fallback: "'Helvetica Neue', Arial, sans-serif"
+  body_font: "Inter"
+  body_fallback: "'Segoe UI', Arial, sans-serif"
+  mono_font: "JetBrains Mono"
+  mono_fallback: "'Consolas', 'Courier New', monospace"
+  base_size_px: 14
+  heading_weights: {h1: 700, h2: 600, h3: 600}
+
+pnl_colors:
+  profit_emerald: "#10B981"
+  profit_emerald_glow: "rgba(16,185,129,0.22)"
+  loss_crimson: "#EF4444"
+  loss_crimson_glow: "rgba(239,68,68,0.22)"
+  neutral_slate: "#64748B"
+  warning_amber: "#F59E0B"
+  ok_emerald: "#34D399"
+
+segment_palette:
+  NIFTY:      "#22D3EE"
+  BANKNIFTY:  "#F472B6"
+  SENSEX:     "#A3E635"
+  FINNIFTY:   "#FB923C"
+  MIDCPNIFTY: "#C084FC"
+  STOCK_FUT:  "#38BDF8"
+  STOCK_OPT:  "#F97316"
+  UNKNOWN:    "#94A3B8"
+
+glassmorphism:
+  card_background: "rgba(18,31,61,0.72)"
+  card_backdrop_filter: "blur(18px) saturate(150%)"
+  card_border: "1px solid rgba(99,102,241,0.22)"
+  card_border_radius_px: 16
+  card_shadow: "0 10px 30px rgba(0,0,0,0.35)"
+  kpi_tile_hover_translate_px: -2
+
+reports:
+  pdf_page_size: "A4"
+  pdf_margins_mm: {top: 12, bottom: 16, left: 10, right: 10}
+  print_background: true
+  chart_width_percent: 100
+  section_gap_px: 22
+
+charts:
+  template: "plotly_dark"
+  paper_bgcolor: "rgba(0,0,0,0)"
+  plot_bgcolor: "rgba(0,0,0,0)"
+  font_family: "Inter"
+  mono_font: "JetBrains Mono"
+  rupee_tick_prefix: "₹"
+  tick_format_2dp: ",.2f"
+  calendar_gap_px: 2
+
+streamlit:
+  accent_bar_thickness_px: 3
+  custom_scrollbar: true
+  strategy_card_css_class: "strategy-card"
+  kpi_card_css_class: "kpi-card"
