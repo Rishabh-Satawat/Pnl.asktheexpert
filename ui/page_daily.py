@@ -27,31 +27,17 @@ def render_daily_processing() -> None:
     report_date = st.date_input("Trading Date", value=date.today())
     st.session_state["report_date"] = report_date
 
-    # ── Screenshot Upload ─────────────────────────────────────────
-    st.subheader("1. Upload Source Screenshots")
-    uploaded_files = st.file_uploader(
-        "Upload 1-5 screenshots (PNG / JPG / PDF)",
-        type=["png", "jpg", "jpeg", "pdf"],
-        accept_multiple_files=True,
-        key="daily_upload",
+    # ── Mode Toggle ───────────────────────────────────────────────
+    st.divider()
+    mode = st.radio(
+        "Select Ingestion Mode",
+        ["✍️ Manual Trade Entry", "📸 Screenshot Upload"],
+        horizontal=True,
+        key="ingestion_mode",
     )
+    st.divider()
 
-    if uploaded_files:
-        if len(uploaded_files) > 5:
-            st.warning("Maximum 5 files allowed. Only the first 5 will be processed.")
-            uploaded_files = uploaded_files[:5]
-
-        st.markdown("**Detected sources:**")
-        for uf in uploaded_files:
-            ext = uf.name.rsplit(".", 1)[-1].upper() if "." in uf.name else "UNKNOWN"
-            badge_color = {"PNG": "#22D3EE", "JPG": "#F472B6", "JPEG": "#F472B6", "PDF": "#A3E635"}.get(ext, "#94A3B8")
-            st.markdown(
-                f'<span style="background:{badge_color}20;color:{badge_color};padding:2px 8px;border-radius:4px;'
-                f'font-size:0.82rem;font-weight:600;">{ext}</span> {uf.name}',
-                unsafe_allow_html=True,
-            )
-
-    # ── Gemini key check ──────────────────────────────────────────
+    # ── Gemini key helper (used only in Screenshot mode) ──────────
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     if not gemini_key:
         try:
@@ -76,120 +62,334 @@ def render_daily_processing() -> None:
             mime="text/csv",
         )
 
-    if not gemini_key:
-        st.info(
-            "Gemini API key not configured. You can set it in **Settings & Knowledge Base** page, "
-            "or use manual CSV upload below."
-        )
-        _show_manual_csv_fallback()
-    elif uploaded_files:
-        # ── Extract button ────────────────────────────────────────
-        st.markdown("")
-        extract_clicked = st.button(
-            "🔍 Extract Data from Screenshots",
-            type="primary",
-            key="btn_extract_screenshots",
-            help="Send uploaded screenshots to Gemini Vision AI to extract trade data",
-        )
-        if extract_clicked:
-            st.session_state["extract_clicked"] = True
+    # =================================================================
+    # MODE A: MANUAL TRADE ENTRY (zero API dependency)
+    # =================================================================
+    if mode == "✍️ Manual Trade Entry":
+        st.subheader("1. Strategy Card Details")
 
-        if st.session_state.get("extract_clicked"):
-            try:
-                from src.gemini_parser import (
-                    GeminiScreenshotParser,
-                    DependenciesMissingError,
-                    GeminiAuthError,
+        _LOT_MAP = {"SENSEX": 20, "BANKNIFTY": 15, "NIFTY": 25, "FINNIFTY": 25, "MIDCPNIFTY": 50}
+
+        with st.expander("📋 Strategy Card (Capital, Multiplier, Broker)", expanded=True):
+            sc_name = st.text_input(
+                "Strategy Name",
+                value="SENSEX BFO Dynamic Inside-Day Short Strangle v1",
+                key="sc_name",
+            )
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                sc_capital = st.number_input(
+                    "Capital Deployed (₹)", min_value=0.0, value=300000.0, step=10000.0, key="sc_capital",
                 )
+            with col2:
+                sc_multiplier = st.selectbox("Multiplier", [1, 2, 3, 4, 5], index=0, key="sc_multiplier")
+            with col3:
+                sc_status = st.selectbox("Status", ["Exited", "LIVE AUTO", "Paused"], key="sc_status")
+            sc_broker = st.selectbox("Broker", ["Zerodha", "Dhan", "Upstox"], key="sc_broker")
 
-                with st.spinner("Calling Gemini Vision... This may take 10-30 seconds."):
-                    parser = GeminiScreenshotParser(api_key=gemini_key)
-                    filenames = [f.name for f in uploaded_files]
-                    image_bytes_list = [f.read() for f in uploaded_files]
-                    result = parser.parse_screenshots(image_bytes_list, filenames=filenames)
+        st.subheader("2. Underlying & Segment")
+        col_seg, col_exch, col_lot = st.columns(3)
+        with col_seg:
+            segment = st.selectbox(
+                "Underlying",
+                ["SENSEX", "BANKNIFTY", "NIFTY", "FINNIFTY", "MIDCPNIFTY"],
+                key="me_segment",
+            )
+        with col_exch:
+            exchange = "BSE" if segment == "SENSEX" else "NSE"
+            st.text_input("Exchange (auto)", value=exchange, disabled=True, key="me_exchange_display")
+        with col_lot:
+            lot_size = _LOT_MAP.get(segment, 20)
+            st.text_input("Lot Size (auto)", value=str(lot_size), disabled=True, key="me_lotsize_display")
 
-                executions = result.get("executions", [])
-                positions = result.get("positions", [])
-                strategy_cards = result.get("strategy_cards", [])
-                contract_note = result.get("contract_note", {})
+        st.subheader("3. Execution Legs")
+        st.caption(
+            "Edit the table below. Add/remove rows as needed. "
+            "Tip: For a standard short strangle, you need 4 rows — PE Entry, PE Exit, CE Entry, CE Exit."
+        )
 
-                # Priority: Tradetron executions > Kite positions > strategy cards
-                if executions:
-                    staging_df = pd.DataFrame(executions) if pd is not None else None
-                elif positions:
-                    staging_df = pd.DataFrame(positions) if pd is not None else None
-                elif strategy_cards:
-                    staging_df = pd.DataFrame(strategy_cards) if pd is not None else None
-                else:
-                    staging_df = pd.DataFrame() if pd is not None else None
+        # Build default 4-leg template for a short strangle
+        _date_str = str(report_date)
+        _sym_date = report_date.strftime("%d%b%Y").upper()
+        _qty = lot_size * sc_multiplier
 
-                st.session_state["staging_data"] = staging_df
-                st.session_state["gemini_result"] = result
-                st.session_state["strategy_cards_extracted"] = strategy_cards
-                st.session_state["contract_note_extracted"] = contract_note
+        _default_legs = pd.DataFrame([
+            {
+                "vendor_symbol": f"OPTIDX_{segment}_{_sym_date}_PE_00000",
+                "trade_date": _date_str,
+                "execution_time": "09:30:00",
+                "condition": "Entry",
+                "side": "SELL",
+                "quantity": _qty,
+                "price": 0.0,
+                "amount": 0.0,
+                "exchange": exchange,
+                "segment": segment,
+            },
+            {
+                "vendor_symbol": f"OPTIDX_{segment}_{_sym_date}_PE_00000",
+                "trade_date": _date_str,
+                "execution_time": "15:20:00",
+                "condition": "Universal Exit",
+                "side": "BUY",
+                "quantity": _qty,
+                "price": 0.0,
+                "amount": 0.0,
+                "exchange": exchange,
+                "segment": segment,
+            },
+            {
+                "vendor_symbol": f"OPTIDX_{segment}_{_sym_date}_CE_00000",
+                "trade_date": _date_str,
+                "execution_time": "09:30:00",
+                "condition": "Entry",
+                "side": "SELL",
+                "quantity": _qty,
+                "price": 0.0,
+                "amount": 0.0,
+                "exchange": exchange,
+                "segment": segment,
+            },
+            {
+                "vendor_symbol": f"OPTIDX_{segment}_{_sym_date}_CE_00000",
+                "trade_date": _date_str,
+                "execution_time": "15:20:00",
+                "condition": "Universal Exit",
+                "side": "BUY",
+                "quantity": _qty,
+                "price": 0.0,
+                "amount": 0.0,
+                "exchange": exchange,
+                "segment": segment,
+            },
+        ]) if pd is not None else None
 
-                with st.expander("🔍 Debug: Raw Gemini Output", expanded=False):
-                    st.json(result)
-                    st.caption(
-                        f"Executions: {len(executions)} | "
-                        f"Kite positions: {len(positions)} | "
-                        f"Strategy cards: {len(strategy_cards)}"
+        # Use session state to persist edits across reruns
+        _init_key = f"manual_entry_legs_{segment}_{sc_multiplier}"
+        if _init_key not in st.session_state or st.session_state.get("me_last_key") != _init_key:
+            st.session_state["manual_entry_legs"] = _default_legs
+            st.session_state["me_last_key"] = _init_key
+
+        edited_legs = st.data_editor(
+            st.session_state.get("manual_entry_legs", _default_legs),
+            use_container_width=True,
+            num_rows="dynamic",
+            column_config={
+                "side": st.column_config.SelectboxColumn("Side", options=["BUY", "SELL"]),
+                "condition": st.column_config.SelectboxColumn(
+                    "Condition", options=["Entry", "Universal Exit", "SL Hit", "Target Hit"]
+                ),
+                "exchange": st.column_config.SelectboxColumn("Exchange", options=["NSE", "BSE"]),
+                "segment": st.column_config.SelectboxColumn(
+                    "Segment", options=["SENSEX", "BANKNIFTY", "NIFTY", "FINNIFTY", "MIDCPNIFTY"]
+                ),
+                "price": st.column_config.NumberColumn("Price (₹)", format="₹%.2f"),
+                "amount": st.column_config.NumberColumn("Amount (₹)", format="₹%.2f"),
+                "quantity": st.column_config.NumberColumn("Qty", format="%d"),
+            },
+            key="manual_legs_editor",
+        )
+        st.session_state["manual_entry_legs"] = edited_legs
+
+        # Optional: Contract Note Charges
+        with st.expander("📄 Contract Note Charges (optional — leave blank for FORMULA mode)"):
+            st.caption("If you have exact charges from your broker contract note, enter them here (REALIZED mode). Otherwise leave blank and the Zerodha formula will be used.")
+            col_b, col_stt, col_gst = st.columns(3)
+            with col_b:
+                cn_brokerage = st.number_input("Brokerage (₹)", value=0.0, min_value=0.0, step=1.0, key="cn_brokerage")
+            with col_stt:
+                cn_stt = st.number_input("STT (₹)", value=0.0, min_value=0.0, step=0.01, key="cn_stt")
+            with col_gst:
+                cn_gst = st.number_input("GST (₹)", value=0.0, min_value=0.0, step=0.01, key="cn_gst")
+            col_ef, col_sebi, col_stamp = st.columns(3)
+            with col_ef:
+                cn_exch_fee = st.number_input("Exchange Fee (₹)", value=0.0, min_value=0.0, step=0.01, key="cn_exch_fee")
+            with col_sebi:
+                cn_sebi = st.number_input("SEBI Charges (₹)", value=0.0, min_value=0.0, step=0.01, key="cn_sebi")
+            with col_stamp:
+                cn_stamp = st.number_input("Stamp Duty (₹)", value=0.0, min_value=0.0, step=0.01, key="cn_stamp")
+            cn_total = cn_brokerage + cn_stt + cn_gst + cn_exch_fee + cn_sebi + cn_stamp
+            if cn_total > 0:
+                st.metric("Total Realized Charges", f"₹{cn_total:,.2f}")
+                st.session_state["contract_note_extracted"] = {
+                    "brokerage_amount": cn_brokerage,
+                    "securities_transaction_tax_stt": cn_stt,
+                    "gst": cn_gst,
+                    "exchange_turnover_fee_amount": cn_exch_fee,
+                    "sebi_turnover_charges": cn_sebi,
+                    "stamp_duty": cn_stamp,
+                    "total_charges_grand_total": cn_total,
+                }
+            else:
+                # Clear any previously stored contract note so FORMULA mode is used
+                st.session_state.pop("contract_note_extracted", None)
+
+        # Load into Staging button
+        if st.button("✅ Load into Staging", type="primary", key="btn_load_manual"):
+            if edited_legs is not None and len(edited_legs) > 0:
+                st.session_state["staging_data"] = edited_legs.copy()
+                strategy_card = {
+                    "strategy_name": sc_name,
+                    "capital_deployed_allocated": sc_capital,
+                    "multiplier_x": sc_multiplier,
+                    "deployment_status": sc_status,
+                    "broker": sc_broker,
+                    "booked_gross_pnl": 0.0,
+                    "card_roi_pct": 0.0,
+                }
+                st.session_state["strategy_cards_extracted"] = [strategy_card]
+                st.session_state["gemini_result"] = {}
+                st.success(
+                    f"✅ {len(edited_legs)} execution rows loaded into staging. "
+                    "Scroll down to review, then click **Approve & Run Pipeline**."
+                )
+            else:
+                st.warning("No rows to load. Please add at least one execution leg above.")
+
+    # =================================================================
+    # MODE B: SCREENSHOT UPLOAD (Gemini Vision)
+    # =================================================================
+    elif mode == "📸 Screenshot Upload":
+        st.subheader("1. Upload Source Screenshots")
+        uploaded_files = st.file_uploader(
+            "Upload 1-5 screenshots (PNG / JPG / PDF)",
+            type=["png", "jpg", "jpeg", "pdf"],
+            accept_multiple_files=True,
+            key="daily_upload",
+        )
+
+        if uploaded_files:
+            if len(uploaded_files) > 5:
+                st.warning("Maximum 5 files allowed. Only the first 5 will be processed.")
+                uploaded_files = uploaded_files[:5]
+
+            st.markdown("**Detected sources:**")
+            for uf in uploaded_files:
+                ext = uf.name.rsplit(".", 1)[-1].upper() if "." in uf.name else "UNKNOWN"
+                badge_color = {"PNG": "#22D3EE", "JPG": "#F472B6", "JPEG": "#F472B6", "PDF": "#A3E635"}.get(ext, "#94A3B8")
+                st.markdown(
+                    f'<span style="background:{badge_color}20;color:{badge_color};padding:2px 8px;border-radius:4px;'
+                    f'font-size:0.82rem;font-weight:600;">{ext}</span> {uf.name}',
+                    unsafe_allow_html=True,
+                )
+        else:
+            uploaded_files = []
+
+        if not gemini_key:
+            st.warning(
+                "⚠️ Gemini API key not configured. Switch to **✍️ Manual Trade Entry** mode above, "
+                "or set GEMINI_API_KEY in Settings."
+            )
+            _show_manual_csv_fallback()
+        elif uploaded_files:
+            # ── Extract button ────────────────────────────────────────
+            st.markdown("")
+            extract_clicked = st.button(
+                "🔍 Extract Data from Screenshots",
+                type="primary",
+                key="btn_extract_screenshots",
+                help="Send uploaded screenshots to Gemini Vision AI to extract trade data",
+            )
+            if extract_clicked:
+                st.session_state["extract_clicked"] = True
+
+            if st.session_state.get("extract_clicked"):
+                try:
+                    from src.gemini_parser import (
+                        GeminiScreenshotParser,
+                        DependenciesMissingError,
+                        GeminiAuthError,
                     )
 
-                # Show strategy card info box when cards were found
-                if strategy_cards:
-                    st.info("**Strategy Cards Detected:**")
-                    for sc in strategy_cards:
-                        name = sc.get("strategy_name", "Unknown Strategy")
-                        capital = sc.get("capital_deployed_allocated", 0)
-                        multiplier = sc.get("multiplier_x", 1)
-                        status = sc.get("deployment_status", "")
-                        pnl = sc.get("booked_gross_pnl", 0)
-                        roi = sc.get("card_roi_pct", 0)
-                        capital_l = f"₹{capital/100000:.2f}L" if capital else "N/A"
-                        pnl_str = f"₹{pnl:+,.0f}" if pnl else "N/A"
-                        st.markdown(
-                            f"**{name}** | {multiplier}x | Capital: {capital_l} | "
-                            f"Status: {status} | Booked P&L: {pnl_str} ({roi:+.2f}%)"
+                    with st.spinner("Calling Gemini Vision... This may take 10-30 seconds."):
+                        parser = GeminiScreenshotParser(api_key=gemini_key)
+                        filenames = [f.name for f in uploaded_files]
+                        image_bytes_list = [f.read() for f in uploaded_files]
+                        result = parser.parse_screenshots(image_bytes_list, filenames=filenames)
+
+                    executions = result.get("executions", [])
+                    positions = result.get("positions", [])
+                    strategy_cards = result.get("strategy_cards", [])
+                    contract_note = result.get("contract_note", {})
+
+                    # Priority: Tradetron executions > Kite positions > strategy cards
+                    if executions:
+                        staging_df = pd.DataFrame(executions) if pd is not None else None
+                    elif positions:
+                        staging_df = pd.DataFrame(positions) if pd is not None else None
+                    elif strategy_cards:
+                        staging_df = pd.DataFrame(strategy_cards) if pd is not None else None
+                    else:
+                        staging_df = pd.DataFrame() if pd is not None else None
+
+                    st.session_state["staging_data"] = staging_df
+                    st.session_state["gemini_result"] = result
+                    st.session_state["strategy_cards_extracted"] = strategy_cards
+                    st.session_state["contract_note_extracted"] = contract_note
+
+                    with st.expander("🔍 Debug: Raw Gemini Output", expanded=False):
+                        st.json(result)
+                        st.caption(
+                            f"Executions: {len(executions)} | "
+                            f"Kite positions: {len(positions)} | "
+                            f"Strategy cards: {len(strategy_cards)}"
                         )
 
-                if staging_df is not None and not staging_df.empty:
-                    total_rows = len(staging_df)
-                    source = "execution" if executions else ("position" if positions else "strategy card")
-                    st.success(
-                        f"✅ Extracted {total_rows} {source} row(s) from {len(uploaded_files)} screenshot(s). "
-                        "Review and edit below before running the pipeline."
-                    )
-                else:
-                    st.warning(
-                        "Gemini processed the screenshots but found no position or strategy card rows. "
-                        "Try manual CSV upload or check the screenshot quality."
-                    )
+                    # Show strategy card info box when cards were found
+                    if strategy_cards:
+                        st.info("**Strategy Cards Detected:**")
+                        for sc in strategy_cards:
+                            name = sc.get("strategy_name", "Unknown Strategy")
+                            capital = sc.get("capital_deployed_allocated", 0)
+                            multiplier = sc.get("multiplier_x", 1)
+                            status = sc.get("deployment_status", "")
+                            pnl = sc.get("booked_gross_pnl", 0)
+                            roi = sc.get("card_roi_pct", 0)
+                            capital_l = f"₹{capital/100000:.2f}L" if capital else "N/A"
+                            pnl_str = f"₹{pnl:+,.0f}" if pnl else "N/A"
+                            st.markdown(
+                                f"**{name}** | {multiplier}x | Capital: {capital_l} | "
+                                f"Status: {status} | Booked P&L: {pnl_str} ({roi:+.2f}%)"
+                            )
+
+                    if staging_df is not None and not staging_df.empty:
+                        total_rows = len(staging_df)
+                        source = "execution" if executions else ("position" if positions else "strategy card")
+                        st.success(
+                            f"✅ Extracted {total_rows} {source} row(s) from {len(uploaded_files)} screenshot(s). "
+                            "Review and edit below before running the pipeline."
+                        )
+                    else:
+                        st.warning(
+                            "Gemini processed the screenshots but found no position or strategy card rows. "
+                            "Switch to Manual Trade Entry mode or check screenshot quality."
+                        )
+                        _show_manual_csv_fallback()
+
+                    # Reset flag so button can be clicked again if needed
+                    st.session_state["extract_clicked"] = False
+
+                except GeminiAuthError as auth_exc:
+                    st.error("❌ Gemini API Error - Cannot Extract Data")
+                    st.error(auth_exc.user_action)
+                    with st.expander("Technical Details"):
+                        st.code(f"{auth_exc.error_code}: {auth_exc.original_error}")
+                    st.info("💡 **Tip:** Switch to **✍️ Manual Trade Entry** mode above to enter trades without any API.")
                     _show_manual_csv_fallback()
-
-                # Reset flag so button can be clicked again if needed
-                st.session_state["extract_clicked"] = False
-
-            except GeminiAuthError as auth_exc:
-                st.error("❌ Gemini API Error - Cannot Extract Data")
-                st.error(auth_exc.user_action)
-                with st.expander("Technical Details"):
-                    st.code(f"{auth_exc.error_code}: {auth_exc.original_error}")
-                _show_manual_csv_fallback()
-                st.session_state["extract_clicked"] = False
-            except DependenciesMissingError as dep_exc:
-                st.error("❌ Configuration Error")
-                st.error(dep_exc.user_action)
-                _show_manual_csv_fallback()
-                st.session_state["extract_clicked"] = False
-            except Exception as exc:
-                st.error(f"❌ Unexpected Error: {exc}")
-                with st.expander("Traceback"):
-                    st.code(traceback.format_exc())
-                _show_manual_csv_fallback()
-                st.session_state["extract_clicked"] = False
-    else:
-        st.caption("Upload screenshots above, then click **Extract Data from Screenshots**.")
+                    st.session_state["extract_clicked"] = False
+                except DependenciesMissingError as dep_exc:
+                    st.error("❌ Configuration Error")
+                    st.error(dep_exc.user_action)
+                    _show_manual_csv_fallback()
+                    st.session_state["extract_clicked"] = False
+                except Exception as exc:
+                    st.error(f"❌ Unexpected Error: {exc}")
+                    with st.expander("Traceback"):
+                        st.code(traceback.format_exc())
+                    _show_manual_csv_fallback()
+                    st.session_state["extract_clicked"] = False
+        else:
+            st.caption("Upload screenshots above, then click **Extract Data from Screenshots**.")
 
     # ── Staging Review ────────────────────────────────────────────
     st.subheader("2. Staging Review")
