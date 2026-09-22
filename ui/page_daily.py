@@ -454,7 +454,7 @@ def render_daily_processing() -> None:
 
         # ── Export Buttons ────────────────────────────────────────
         st.subheader("5. Export")
-        exp_cols = st.columns(4)
+        exp_cols = st.columns(5)
         with exp_cols[0]:
             st.button("Save to DB", key="btn_save_db")
         with exp_cols[1]:
@@ -463,6 +463,32 @@ def render_daily_processing() -> None:
             st.button("Download Excel", key="btn_excel")
         with exp_cols[3]:
             st.button("Download CSVs", key="btn_csvs")
+        with exp_cols[4]:
+            # HTML export: self-contained, shareable report
+            if "pipeline_result" in st.session_state and st.session_state.get("pipeline_result") is not None:
+                try:
+                    from src.report_engine import DailyReportGenerator
+                    from datetime import date
+                    pr = st.session_state["pipeline_result"]
+                    gen = DailyReportGenerator(
+                        report_date=st.session_state.get("report_date", date.today()),
+                        strategy_runs_df=pr.strategy_runs_df,
+                        daily_summary_dict=pr.daily_summary_df,
+                        charges_df=pr.charges_df,
+                        matched_trades_df=getattr(pr, "matched_trades_df", None),
+                    )
+                    html_str = gen.render_daily_html()
+                    st.download_button(
+                        label="🌐 Download HTML",
+                        data=html_str,
+                        file_name=f"Quant_Report_{st.session_state.get('report_date', date.today()).isoformat()}.html",
+                        mime="text/html",
+                        key="btn_html"
+                    )
+                except Exception as e:
+                    st.warning(f"HTML export unavailable: {str(e)[:100]}")
+            else:
+                st.button("🌐 Download HTML", disabled=True, key="btn_html_disabled", help="Run pipeline first")
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +635,13 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
         failed = [s for s in result.per_stage if s.status == "FAIL"]
         if failed:
             status_text.warning(f"Pipeline completed with failures in: {[s.stage_name for s in failed]}")
+            # Display error banner
+            st.error(f"⚠️ **Pipeline Failed** — {len(failed)} stage(s) failed. Check details below:")
+            for stage in failed:
+                with st.expander(f"📍 {stage.stage_name} — {stage.error_message or 'Unknown error'}"):
+                    if stage.errors:
+                        for err in stage.errors:
+                            st.code(str(err))
         else:
             status_text.success("Pipeline completed successfully!")
 
