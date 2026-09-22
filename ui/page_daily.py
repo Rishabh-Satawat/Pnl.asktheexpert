@@ -456,7 +456,11 @@ def render_daily_processing() -> None:
         st.subheader("5. Export")
         exp_cols = st.columns(5)
         with exp_cols[0]:
-            st.button("Save to DB", key="btn_save_db")
+            if st.button("Save to DB", key="btn_save_db"):
+                _save_to_db(
+                    st.session_state.get("pipeline_result"),
+                    st.session_state.get("report_date", date.today()),
+                )
         with exp_cols[1]:
             st.button("Download PDF", key="btn_pdf")
         with exp_cols[2]:
@@ -489,6 +493,46 @@ def render_daily_processing() -> None:
                     st.warning(f"HTML export unavailable: {str(e)[:100]}")
             else:
                 st.button("🌐 Download HTML", disabled=True, key="btn_html_disabled", help="Run pipeline first")
+
+
+# ---------------------------------------------------------------------------
+# DB persistence helper (Patch 1C)
+# ---------------------------------------------------------------------------
+
+def _save_to_db(pipeline_result, report_date) -> None:
+    """Persist pipeline_result to SQLite + Supabase."""
+    if pipeline_result is None:
+        st.warning("No pipeline result to save. Run the pipeline first.")
+        return
+    try:
+        from src.db.engine import init_db
+        from src.pnl_pipeline import DailyPipelineOrchestrator
+        engine, SessionLocal = init_db("data/quant_desk.db")
+        orchestrator = DailyPipelineOrchestrator(db_engine=engine, session_factory=SessionLocal)
+        tables = {
+            "strategy_runs_df": pipeline_result.strategy_runs_df,
+            "daily_summary_dict": pipeline_result.daily_summary_df,
+            "charges_df": pipeline_result.charges_df,
+            "matched_trades_df": None,
+        }
+        s8 = orchestrator.stage_8_persist_sqlite(SessionLocal or engine, tables, report_date)
+        if s8.status in ("SUCCESS", "WARNING"):
+            st.success("✅ Saved to local database successfully.")
+            try:
+                from src.supabase_store import SupabaseStore
+                store = SupabaseStore()
+                if store.is_available():
+                    store.upsert_daily_summary(pipeline_result.daily_summary_df, report_date)
+                    st.success("✅ Synced to Supabase cloud.")
+            except Exception:
+                pass
+        else:
+            st.error(f"Save failed: {s8.errors}")
+    except Exception as e:
+        import traceback
+        st.error(f"Database save error: {e}")
+        with st.expander("Traceback"):
+            st.code(traceback.format_exc())
 
 
 # ---------------------------------------------------------------------------
@@ -577,6 +621,12 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
             import pandas as _pd2
             s3.dataframes["strategy_cards_df"] = _pd2.DataFrame(_sc_extracted)
 
+        # PATCH 1A: In manual mode, staging_df IS the trade_executions_df.
+        # Stage_3 only merges Gemini-parsed strategy_cards; it never sets trade_executions_df.
+        # We inject it directly so stage_4 and stage_5 see the real rows.
+        if "trade_executions_df" not in s3.dataframes or s3.dataframes["trade_executions_df"].empty:
+            s3.dataframes["trade_executions_df"] = staging_df.copy()
+
         # ── Stage 4 ──────────────────────────────────────────────
         _update_progress(progress_bar, status_text, stage_labels, 3)
         s4 = orchestrator.stage_4_classify_symbols(s3.dataframes)
@@ -598,6 +648,26 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
         # ── Stage 7 ──────────────────────────────────────────────
         _update_progress(progress_bar, status_text, stage_labels, 6)
         charges_df = s6.dataframes.get("charges_df", _pd.DataFrame())
+
+        # PATCH 1B: Ensure strategies_df has at least one valid row with strategy_run_id.
+        # In manual mode, strategy_cards_df may be empty or missing the run_id key.
+        if strategies_df is None or strategies_df.empty:
+            _sc_list = st.session_state.get("strategy_cards_extracted", [])
+            if _sc_list:
+                strategies_df = _pd.DataFrame(_sc_list)
+            else:
+                strategies_df = _pd.DataFrame([{
+                    "strategy_name": st.session_state.get("sc_name", "Manual Strategy"),
+                    "capital_deployed_allocated": st.session_state.get("sc_capital", 0.0),
+                    "multiplier_x": st.session_state.get("sc_multiplier", 1),
+                    "deployment_status": "Exited",
+                    "broker": st.session_state.get("sc_broker", "Zerodha"),
+                }])
+        # Assign strategy_run_id=0 if missing (matches default in TradeMatcher)
+        if "strategy_run_id" not in strategies_df.columns:
+            strategies_df = strategies_df.copy()
+            strategies_df["strategy_run_id"] = 0
+
         s7 = orchestrator.stage_7_compute_summary(strategies_df, matched_df, charges_df)
 
         # ── Stage 8 ──────────────────────────────────────────────

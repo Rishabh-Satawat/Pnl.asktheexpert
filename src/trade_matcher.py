@@ -52,6 +52,16 @@ class TradeMatcher:
             if old_name in df.columns and new_name not in df.columns:
                 df.rename(columns={old_name: new_name}, inplace=True)
 
+        # Synthesize execution_timestamp from trade_date + execution_time if missing
+        if "execution_timestamp" not in df.columns:
+            if "trade_date" in df.columns and "execution_time" in df.columns:
+                df["execution_timestamp"] = pd.to_datetime(
+                    df["trade_date"].astype(str) + " " + df["execution_time"].astype(str),
+                    errors="coerce",
+                )
+            else:
+                df["execution_timestamp"] = pd.Timestamp.now()
+
         # Normalize side to upper
         if "side" in df.columns:
             df["side"] = df["side"].astype(str).str.strip().str.upper()
@@ -97,7 +107,7 @@ class TradeMatcher:
 
         groups = df.groupby(match_key, sort=False)
         for _key, grp in groups:
-            grp_sorted = grp.sort_values("execution_timestamp")
+            grp_sorted = grp.sort_values("execution_timestamp") if "execution_timestamp" in grp.columns else grp
             buy_queue: deque = deque()
             sell_queue: deque = deque()
 
