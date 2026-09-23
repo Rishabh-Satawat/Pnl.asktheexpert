@@ -34,6 +34,56 @@ def _load_supabase_data(start_date, end_date):
         return None, None, False
 
 
+def _load_sqlite_data(start_date, end_date):
+    """Fallback: read daily_summaries + equity_curve from SQLite."""
+    try:
+        from src.db.engine import init_db
+        from src.db.schema import DailySummary, EquityCurve
+        from sqlalchemy.orm import Session
+        engine, SessionLocal = init_db("data/quant_desk.db")
+        with SessionLocal() as session:
+            summaries = session.query(DailySummary).filter(
+                DailySummary.report_date >= str(start_date),
+                DailySummary.report_date <= str(end_date),
+            ).order_by(DailySummary.report_date).all()
+            s_df = pd.DataFrame([{
+                "report_date": s.report_date,
+                "total_net_pnl": s.total_net_pnl,
+                "total_gross_pnl": s.total_gross_pnl,
+                "total_allocated_charges": s.total_transaction_cost_drag,
+                "win_count": s.win_count,
+                "loss_count": s.loss_count,
+                "flat_count": 0,
+                "peak_capital_deployed": s.total_capital_deployed_peak,
+                "portfolio_day_roi_pct": s.portfolio_day_net_roi_pct,
+                "total_trades_executed": s.total_trades_executed,
+            } for s in summaries]) if summaries and pd is not None else pd.DataFrame()
+
+            equity_rows = session.query(EquityCurve).filter(
+                EquityCurve.report_date >= str(start_date),
+                EquityCurve.report_date <= str(end_date),
+            ).order_by(EquityCurve.report_date).all()
+            if equity_rows and pd is not None:
+                e_df = pd.DataFrame([{
+                    "report_date": e.report_date,
+                    "cumulative_net_pnl": e.cumulative_net_pnl,
+                    "drawdown_pct": e.drawdown_pct if e.drawdown_pct is not None else 0.0,
+                } for e in equity_rows])
+            elif not s_df.empty and pd is not None:
+                import pandas as _pd2
+                s_df["report_date"] = _pd2.to_datetime(s_df["report_date"])
+                s_df_sorted = s_df.sort_values("report_date")
+                e_df = s_df_sorted[["report_date"]].copy()
+                e_df["cumulative_net_pnl"] = s_df_sorted["total_net_pnl"].cumsum().values
+                peak = e_df["cumulative_net_pnl"].cummax()
+                e_df["drawdown_pct"] = ((peak - e_df["cumulative_net_pnl"]) / peak.replace(0, 1) * 100).clip(lower=0)
+            else:
+                e_df = pd.DataFrame()
+        return s_df, e_df, True
+    except Exception:
+        return None, None, False
+
+
 def render_historical_dashboard() -> None:
     """Page 2: Historical Dashboard - KPIs, equity curve, heatmap, streaks."""
     if st is None:
@@ -79,13 +129,10 @@ def render_historical_dashboard() -> None:
     # ── Load data from Supabase ────────────────────────────────────
     summaries_df, equity_df, sb_connected = _load_supabase_data(start_date, end_date)
     if not sb_connected:
-        st.warning(
-            "Supabase not connected. Configure SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY "
-            "in Settings or .env to load historical data.",
-            icon="☁️",
-        )
-    elif summaries_df is not None and summaries_df.empty:
-        st.info("No trading data found for the selected date range.", icon="📭")
+        st.info("☁️ Supabase not connected — loading from local SQLite database.", icon="💾")
+        summaries_df, equity_df, _ = _load_sqlite_data(start_date, end_date)
+    if summaries_df is not None and summaries_df.empty:
+        st.info("No trading data found for the selected date range. Run the pipeline and Save to DB first.", icon="📭")
 
     # ── Filters ───────────────────────────────────────────────────
     filter_col1, filter_col2 = st.columns(2)

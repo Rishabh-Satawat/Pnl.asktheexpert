@@ -62,6 +62,10 @@ class TradeMatcher:
             else:
                 df["execution_timestamp"] = pd.Timestamp.now()
 
+        # Default strategy_run_id=0 if column is missing (manual entry rows have no run_id)
+        if "strategy_run_id" not in df.columns:
+            df["strategy_run_id"] = 0
+
         # Normalize side to upper
         if "side" in df.columns:
             df["side"] = df["side"].astype(str).str.strip().str.upper()

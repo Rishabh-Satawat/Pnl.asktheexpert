@@ -456,81 +456,135 @@ def render_daily_processing() -> None:
         st.subheader("5. Export")
         exp_cols = st.columns(5)
         with exp_cols[0]:
-            if st.button("Save to DB", key="btn_save_db"):
+            if st.button("💾 Save to DB", key="btn_save_db", type="primary"):
                 _save_to_db(
                     st.session_state.get("pipeline_result"),
                     st.session_state.get("report_date", date.today()),
                 )
         with exp_cols[1]:
-            st.button("Download PDF", key="btn_pdf")
+            # PDF export
+            try:
+                from src.report_engine import DailyReportGenerator
+                pr = st.session_state["pipeline_result"]
+                gen = DailyReportGenerator(
+                    report_date=st.session_state.get("report_date", date.today()),
+                    strategy_runs_df=pr.strategy_runs_df,
+                    daily_summary_dict=pr.daily_summary_df,
+                    charges_df=pr.charges_df,
+                    matched_trades_df=getattr(pr, "matched_trades_df", None),
+                )
+                pdf_bytes = gen.render_daily_pdf() if hasattr(gen, "render_daily_pdf") else None
+                if pdf_bytes:
+                    st.download_button("📄 Download PDF", data=pdf_bytes,
+                        file_name=f"Quant_Report_{st.session_state.get('report_date', date.today()).isoformat()}.pdf",
+                        mime="application/pdf", key="btn_pdf")
+                else:
+                    st.button("📄 Download PDF", disabled=True, key="btn_pdf_na", help="PDF generation unavailable")
+            except Exception:
+                st.button("📄 Download PDF", disabled=True, key="btn_pdf_err", help="PDF unavailable")
         with exp_cols[2]:
-            st.button("Download Excel", key="btn_excel")
+            # Excel export
+            try:
+                import io
+                pr = st.session_state["pipeline_result"]
+                buf = io.BytesIO()
+                with __import__("pandas").ExcelWriter(buf, engine="openpyxl") as writer:
+                    if pr.strategy_runs_df is not None and not pr.strategy_runs_df.empty:
+                        pr.strategy_runs_df.to_excel(writer, sheet_name="Strategy Runs", index=False)
+                    if pr.charges_df is not None and not pr.charges_df.empty:
+                        pr.charges_df.to_excel(writer, sheet_name="Charges", index=False)
+                    if isinstance(pr.daily_summary_df, dict):
+                        __import__("pandas").DataFrame([pr.daily_summary_df]).to_excel(writer, sheet_name="Summary", index=False)
+                st.download_button("📊 Download Excel", data=buf.getvalue(),
+                    file_name=f"Quant_Report_{st.session_state.get('report_date', date.today()).isoformat()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="btn_excel")
+            except Exception as exc:
+                st.button("📊 Download Excel", disabled=True, key="btn_excel_err", help=f"Excel error: {str(exc)[:80]}")
         with exp_cols[3]:
-            st.button("Download CSVs", key="btn_csvs")
+            # CSV export
+            try:
+                import io, zipfile
+                pr = st.session_state["pipeline_result"]
+                zip_buf = io.BytesIO()
+                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    if pr.strategy_runs_df is not None and not pr.strategy_runs_df.empty:
+                        zf.writestr("strategy_runs.csv", pr.strategy_runs_df.to_csv(index=False))
+                    if pr.charges_df is not None and not pr.charges_df.empty:
+                        zf.writestr("charges.csv", pr.charges_df.to_csv(index=False))
+                    if isinstance(pr.daily_summary_df, dict):
+                        zf.writestr("summary.csv", __import__("pandas").DataFrame([pr.daily_summary_df]).to_csv(index=False))
+                st.download_button("📁 Download CSVs", data=zip_buf.getvalue(),
+                    file_name=f"Quant_CSVs_{st.session_state.get('report_date', date.today()).isoformat()}.zip",
+                    mime="application/zip", key="btn_csvs")
+            except Exception as exc:
+                st.button("📁 Download CSVs", disabled=True, key="btn_csvs_err", help=f"CSV error: {str(exc)[:80]}")
         with exp_cols[4]:
-            # HTML export: self-contained, shareable report
-            if "pipeline_result" in st.session_state and st.session_state.get("pipeline_result") is not None:
-                try:
-                    from src.report_engine import DailyReportGenerator
-                    from datetime import date
-                    pr = st.session_state["pipeline_result"]
-                    gen = DailyReportGenerator(
-                        report_date=st.session_state.get("report_date", date.today()),
-                        strategy_runs_df=pr.strategy_runs_df,
-                        daily_summary_dict=pr.daily_summary_df,
-                        charges_df=pr.charges_df,
-                        matched_trades_df=getattr(pr, "matched_trades_df", None),
-                    )
-                    html_str = gen.render_daily_html()
-                    st.download_button(
-                        label="🌐 Download HTML",
-                        data=html_str,
-                        file_name=f"Quant_Report_{st.session_state.get('report_date', date.today()).isoformat()}.html",
-                        mime="text/html",
-                        key="btn_html"
-                    )
-                except Exception as e:
-                    st.warning(f"HTML export unavailable: {str(e)[:100]}")
-            else:
-                st.button("🌐 Download HTML", disabled=True, key="btn_html_disabled", help="Run pipeline first")
+            # HTML export
+            try:
+                from src.report_engine import DailyReportGenerator
+                pr = st.session_state["pipeline_result"]
+                gen = DailyReportGenerator(
+                    report_date=st.session_state.get("report_date", date.today()),
+                    strategy_runs_df=pr.strategy_runs_df,
+                    daily_summary_dict=pr.daily_summary_df,
+                    charges_df=pr.charges_df,
+                    matched_trades_df=getattr(pr, "matched_trades_df", None),
+                )
+                html_str = gen.render_daily_html()
+                st.download_button("🌐 Download HTML", data=html_str,
+                    file_name=f"Quant_Report_{st.session_state.get('report_date', date.today()).isoformat()}.html",
+                    mime="text/html", key="btn_html")
+            except Exception as e:
+                st.warning(f"HTML export unavailable: {str(e)[:100]}")
+    else:
+        st.info("ℹ️ Load trades into staging above and click **Approve & Run Pipeline** to view results.")
 
 
 # ---------------------------------------------------------------------------
-# DB persistence helper (Patch 1C)
+# DB save helper
 # ---------------------------------------------------------------------------
 
 def _save_to_db(pipeline_result, report_date) -> None:
-    """Persist pipeline_result to SQLite + Supabase."""
+    """Persist today's pipeline result to SQLite + Supabase."""
     if pipeline_result is None:
         st.warning("No pipeline result to save. Run the pipeline first.")
         return
     try:
         from src.db.engine import init_db
-        from src.pnl_pipeline import DailyPipelineOrchestrator
         engine, SessionLocal = init_db("data/quant_desk.db")
-        orchestrator = DailyPipelineOrchestrator(db_engine=engine, session_factory=SessionLocal)
+        from src.pnl_pipeline import DailyPipelineOrchestrator
+        orch = DailyPipelineOrchestrator(db_engine=engine, session_factory=SessionLocal)
         tables = {
             "strategy_runs_df": pipeline_result.strategy_runs_df,
             "daily_summary_dict": pipeline_result.daily_summary_df,
             "charges_df": pipeline_result.charges_df,
-            "matched_trades_df": None,
+            "matched_trades_df": getattr(pipeline_result, "matched_trades_df", None),
         }
-        s8 = orchestrator.stage_8_persist_sqlite(SessionLocal or engine, tables, report_date)
+        s8 = orch.stage_8_persist_sqlite(SessionLocal or engine, tables, report_date)
         if s8.status in ("SUCCESS", "WARNING"):
-            st.success("✅ Saved to local database successfully.")
+            st.success(f"✅ Saved to SQLite successfully!")
+            # Also try Supabase
             try:
-                from src.supabase_store import SupabaseStore
-                store = SupabaseStore()
-                if store.is_available():
-                    store.upsert_daily_summary(pipeline_result.daily_summary_df, report_date)
-                    st.success("✅ Synced to Supabase cloud.")
-            except Exception:
-                pass
+                from src.supabase_store import get_supabase_store
+                sb = get_supabase_store()
+                if sb.is_connected:
+                    strategy_runs = pipeline_result.strategy_runs_df.to_dict("records") if pipeline_result.strategy_runs_df is not None and not pipeline_result.strategy_runs_df.empty else []
+                    sb.upsert_daily_batch(
+                        report_date=report_date,
+                        daily_summary=pipeline_result.daily_summary_df if isinstance(pipeline_result.daily_summary_df, dict) else None,
+                        strategy_runs=strategy_runs,
+                        charges=pipeline_result.charges_df.to_dict("records") if pipeline_result.charges_df is not None and not pipeline_result.charges_df.empty else [],
+                    )
+                    st.success("☁️ Saved to Supabase successfully!")
+                else:
+                    st.info("Supabase not connected — data saved to SQLite only.")
+            except Exception as sb_exc:
+                st.warning(f"Supabase save failed (SQLite save succeeded): {sb_exc}")
         else:
-            st.error(f"Save failed: {s8.errors}")
-    except Exception as e:
+            st.error(f"❌ Save failed: {s8.errors}")
+    except Exception as exc:
         import traceback
-        st.error(f"Database save error: {e}")
+        st.error(f"❌ Save to DB failed: {exc}")
         with st.expander("Traceback"):
             st.code(traceback.format_exc())
 
@@ -702,6 +756,25 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
         st.session_state["pipeline_result"] = result
         st.session_state["pipeline_complete"] = True
 
+        # Populate audit session_state
+        open_legs_df = None
+        for _s in result.per_stage:
+            if "open_legs_df" in _s.dataframes:
+                open_legs_df = _s.dataframes["open_legs_df"]
+                break
+        if open_legs_df is not None and not open_legs_df.empty:
+            st.session_state["orphan_legs"] = open_legs_df.to_dict("records")
+        # Store matched_trades_df on result for export
+        for _s in result.per_stage:
+            if "matched_df" in _s.dataframes and not _s.dataframes["matched_df"].empty:
+                result.matched_trades_df = _s.dataframes["matched_df"]
+                break
+        # Stage timings for audit
+        st.session_state["pipeline_timings"] = [
+            {"stage": s.stage_name, "status": s.status, "elapsed_ms": round(s.elapsed_ms, 1)}
+            for s in result.per_stage
+        ]
+
         failed = [s for s in result.per_stage if s.status == "FAIL"]
         if failed:
             status_text.warning(f"Pipeline completed with failures in: {[s.stage_name for s in failed]}")
@@ -718,10 +791,11 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
         st.rerun()
 
     except Exception as exc:
-        import traceback
+        import traceback as _tb
         status_text.error(f"Pipeline error: {exc}")
-        with st.expander("Traceback"):
-            st.code(traceback.format_exc())
+        st.error(f"❌ **Pipeline Execution Crashed**: {exc}")
+        with st.expander("Full Traceback — click to expand"):
+            st.code(_tb.format_exc())
 
 
 def _update_progress(progress_bar, status_text, labels: list, idx: int) -> None:
