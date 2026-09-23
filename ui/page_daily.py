@@ -727,35 +727,52 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
         # ── Stage 8 ──────────────────────────────────────────────
         _update_progress(progress_bar, status_text, stage_labels, 7)
         strategy_runs_df = s7.dataframes.get("strategy_runs_df")
-        daily_summary_dict = s7.dataframes.get("daily_summary_dict")
+        # Try multiple possible keys for daily summary
+        daily_summary_dict = (
+            s7.dataframes.get("daily_summary_dict")
+            or s7.dataframes.get("daily_summary_df")
+            or s7.dataframes.get("daily_summaries")
+            or s7.dataframes.get("portfolio_summary")
+        )
 
-        # Fallback: if stage_7 failed or returned empty dict, compute directly from matched_df
-        if not daily_summary_dict or not isinstance(daily_summary_dict, dict):
+        # Deterministic fallback: compute directly from matched_df + charges_df
+        if not daily_summary_dict or not isinstance(daily_summary_dict, dict) or not daily_summary_dict.get("total_gross_pnl"):
             _gross = float(matched_df["gross_pnl"].sum()) if not matched_df.empty and "gross_pnl" in matched_df.columns else 0.0
             _chrgs = float(charges_df["total_charges"].sum()) if not charges_df.empty and "total_charges" in charges_df.columns else 0.0
             _net = _gross - _chrgs
             _cap = float(strategies_df["capital_deployed_allocated"].iloc[0]) if not strategies_df.empty and "capital_deployed_allocated" in strategies_df.columns else 0.0
+            _wins = int((matched_df["gross_pnl"] > 0).sum()) if not matched_df.empty and "gross_pnl" in matched_df.columns else 0
+            _losses = int((matched_df["gross_pnl"] < 0).sum()) if not matched_df.empty and "gross_pnl" in matched_df.columns else 0
             daily_summary_dict = {
                 "total_gross_pnl": _gross,
                 "total_allocated_charges": _chrgs,
                 "total_net_pnl": _net,
+                "total_transaction_cost_drag": _chrgs,
                 "peak_capital_deployed": _cap,
+                "total_capital_deployed_peak": _cap,
                 "portfolio_day_roi_pct": (_net / _cap * 100.0) if _cap > 0 else 0.0,
-                "win_count": int((matched_df["gross_pnl"] > 0).sum()) if not matched_df.empty and "gross_pnl" in matched_df.columns else 0,
-                "loss_count": int((matched_df["gross_pnl"] < 0).sum()) if not matched_df.empty and "gross_pnl" in matched_df.columns else 0,
+                "portfolio_day_net_roi_pct": (_net / _cap * 100.0) if _cap > 0 else 0.0,
+                "win_count": _wins,
+                "loss_count": _losses,
                 "flat_count": 0,
+                "total_trades_executed": len(matched_df),
+                "total_strategy_runs": len(strategies_df),
             }
-        # Fallback: if strategy_runs_df is missing/empty, build minimal version
+
+        # Fallback strategy_runs_df
         if strategy_runs_df is None or (hasattr(strategy_runs_df, "empty") and strategy_runs_df.empty):
             import pandas as _pd3
+            _sname = strategies_df["strategy_name"].iloc[0] if not strategies_df.empty and "strategy_name" in strategies_df.columns else "Manual Strategy"
             strategy_runs_df = _pd3.DataFrame([{
-                "strategy_name": strategies_df["strategy_name"].iloc[0] if not strategies_df.empty and "strategy_name" in strategies_df.columns else "Manual Strategy",
+                "strategy_name": _sname,
                 "booked_gross_pnl": daily_summary_dict.get("total_gross_pnl", 0.0),
                 "allocated_charges_total": daily_summary_dict.get("total_allocated_charges", 0.0),
                 "net_pnl": daily_summary_dict.get("total_net_pnl", 0.0),
                 "net_roi_pct": daily_summary_dict.get("portfolio_day_roi_pct", 0.0),
                 "capital_deployed_allocated": daily_summary_dict.get("peak_capital_deployed", 0.0),
                 "strategy_run_id": 0,
+                "broker": strategies_df["broker"].iloc[0] if not strategies_df.empty and "broker" in strategies_df.columns else "Zerodha",
+                "deployment_status": "Exited",
             }])
         tables = {
             "strategy_runs_df": strategy_runs_df,
@@ -840,21 +857,26 @@ def _render_summary_tab(daily_summary) -> None:
     if daily_summary is None:
         st.caption("No summary data available.")
         return
-
-    if isinstance(daily_summary, dict):
-        d = daily_summary
-    else:
+    if not isinstance(daily_summary, dict):
         st.caption("No summary data available.")
         return
+    d = daily_summary
+
+    # Key aliases — support both naming conventions
+    def _get(*keys, default=0.0):
+        for k in keys:
+            if k in d and d[k] is not None:
+                return d[k]
+        return default
 
     cols = st.columns(3)
     kpi_items = [
-        ("Total Net P&L", d.get("total_net_pnl", 0), "₹"),
-        ("Net ROI", d.get("portfolio_day_roi_pct", d.get("net_roi_pct", 0)), "%"),
-        ("Win Count", d.get("win_count", 0), ""),
-        ("Loss Count", d.get("loss_count", 0), ""),
-        ("Capital Deployed", d.get("peak_capital_deployed", d.get("total_capital_deployed_peak", 0)), "₹"),
-        ("Total Charges", d.get("total_allocated_charges", d.get("total_transaction_cost_drag", 0)), "₹"),
+        ("Total Net P&L", _get("total_net_pnl", "net_pnl"), "₹"),
+        ("Net ROI", _get("portfolio_day_roi_pct", "portfolio_day_net_roi_pct", "net_roi_pct"), "%"),
+        ("Win Count", _get("win_count", default=0), ""),
+        ("Loss Count", _get("loss_count", default=0), ""),
+        ("Capital Deployed", _get("peak_capital_deployed", "total_capital_deployed_peak", "capital_deployed_allocated"), "₹"),
+        ("Total Charges", _get("total_allocated_charges", "total_transaction_cost_drag", "allocated_charges_total"), "₹"),
     ]
     for i, (label, value, prefix) in enumerate(kpi_items):
         with cols[i % 3]:
