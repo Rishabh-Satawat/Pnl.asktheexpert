@@ -290,4 +290,4 @@ def render_historical_dashboard() -> None:
     # ── Raw data table (optional expand) ──────────────────────────
     if summaries_df is not None and not summaries_df.empty:
         with st.expander("View Raw Daily Summary Data"):
-            st.dataframe(summaries_df, use_container_width=True)
+            st.dataframe(summaries_df, width="stretch")

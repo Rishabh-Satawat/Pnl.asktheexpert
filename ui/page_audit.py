@@ -56,7 +56,7 @@ def render_audit() -> None:
     st.subheader("Pipeline Stage Timing")
     if "pipeline_timings" in st.session_state and pd is not None:
         timing_df = pd.DataFrame(st.session_state["pipeline_timings"])
-        st.dataframe(timing_df, use_container_width=True)
+        st.dataframe(timing_df, width="stretch")
     else:
         st.caption("No pipeline timing data available. Run the pipeline from Daily Processing first.")
 
@@ -69,7 +69,7 @@ def render_audit() -> None:
     )
     if "orphan_legs" in st.session_state and pd is not None:
         orphan_df = pd.DataFrame(st.session_state["orphan_legs"])
-        st.dataframe(orphan_df, use_container_width=True)
+        st.dataframe(orphan_df, width="stretch")
     else:
         st.caption("No orphan legs detected.")
 
@@ -83,7 +83,7 @@ def render_audit() -> None:
     )
     if "charge_variance" in st.session_state and pd is not None:
         variance_df = pd.DataFrame(st.session_state["charge_variance"])
-        st.dataframe(variance_df, use_container_width=True)
+        st.dataframe(variance_df, width="stretch")
     else:
         st.caption("No charge variance data available.")
 

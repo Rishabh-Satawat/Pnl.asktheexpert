@@ -52,7 +52,7 @@ def render_daily_processing() -> None:
             try:
                 staging_df = pd.read_csv(csv_file)
                 st.session_state["staging_data"] = staging_df
-                st.dataframe(staging_df, use_container_width=True)
+                st.dataframe(staging_df, width="stretch")
             except Exception as exc:
                 st.error(f"Error reading CSV: {exc}")
         st.download_button(
@@ -728,6 +728,35 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
         _update_progress(progress_bar, status_text, stage_labels, 7)
         strategy_runs_df = s7.dataframes.get("strategy_runs_df")
         daily_summary_dict = s7.dataframes.get("daily_summary_dict")
+
+        # Fallback: if stage_7 failed or returned empty dict, compute directly from matched_df
+        if not daily_summary_dict or not isinstance(daily_summary_dict, dict):
+            _gross = float(matched_df["gross_pnl"].sum()) if not matched_df.empty and "gross_pnl" in matched_df.columns else 0.0
+            _chrgs = float(charges_df["total_charges"].sum()) if not charges_df.empty and "total_charges" in charges_df.columns else 0.0
+            _net = _gross - _chrgs
+            _cap = float(strategies_df["capital_deployed_allocated"].iloc[0]) if not strategies_df.empty and "capital_deployed_allocated" in strategies_df.columns else 0.0
+            daily_summary_dict = {
+                "total_gross_pnl": _gross,
+                "total_allocated_charges": _chrgs,
+                "total_net_pnl": _net,
+                "peak_capital_deployed": _cap,
+                "portfolio_day_roi_pct": (_net / _cap * 100.0) if _cap > 0 else 0.0,
+                "win_count": int((matched_df["gross_pnl"] > 0).sum()) if not matched_df.empty and "gross_pnl" in matched_df.columns else 0,
+                "loss_count": int((matched_df["gross_pnl"] < 0).sum()) if not matched_df.empty and "gross_pnl" in matched_df.columns else 0,
+                "flat_count": 0,
+            }
+        # Fallback: if strategy_runs_df is missing/empty, build minimal version
+        if strategy_runs_df is None or (hasattr(strategy_runs_df, "empty") and strategy_runs_df.empty):
+            import pandas as _pd3
+            strategy_runs_df = _pd3.DataFrame([{
+                "strategy_name": strategies_df["strategy_name"].iloc[0] if not strategies_df.empty and "strategy_name" in strategies_df.columns else "Manual Strategy",
+                "booked_gross_pnl": daily_summary_dict.get("total_gross_pnl", 0.0),
+                "allocated_charges_total": daily_summary_dict.get("total_allocated_charges", 0.0),
+                "net_pnl": daily_summary_dict.get("total_net_pnl", 0.0),
+                "net_roi_pct": daily_summary_dict.get("portfolio_day_roi_pct", 0.0),
+                "capital_deployed_allocated": daily_summary_dict.get("peak_capital_deployed", 0.0),
+                "strategy_run_id": 0,
+            }])
         tables = {
             "strategy_runs_df": strategy_runs_df,
             "daily_summary_dict": daily_summary_dict,
@@ -921,7 +950,7 @@ def _render_trades_tab(pipeline_result) -> None:
         st.caption("No matched trade data available.")
         return
 
-    st.dataframe(matched_df, use_container_width=True)
+    st.dataframe(matched_df, width="stretch")
 
 
 def _render_recon_tab(charges_df) -> None:
@@ -929,4 +958,4 @@ def _render_recon_tab(charges_df) -> None:
         st.caption("No charges/reconciliation data available.")
         return
 
-    st.dataframe(charges_df, use_container_width=True)
+    st.dataframe(charges_df, width="stretch")
