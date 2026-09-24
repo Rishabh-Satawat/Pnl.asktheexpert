@@ -1015,9 +1015,13 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
             # Display error banner
             st.error(f"⚠️ **Pipeline Failed** — {len(failed)} stage(s) failed. Check details below:")
             for stage in failed:
-                with st.expander(f"📍 {stage.stage_name} — {stage.error_message or 'Unknown error'}"):
-                    if stage.errors:
-                        for err in stage.errors:
+                error_message = getattr(stage, "error_message", None) or "; ".join(
+                    str(error) for error in (getattr(stage, "errors", None) or [])
+                )
+                with st.expander(f"📍 {stage.stage_name} — {error_message or 'Unknown error'}"):
+                    stage_errors = getattr(stage, "errors", None) or []
+                    if stage_errors:
+                        for err in stage_errors:
                             st.code(str(err))
         else:
             status_text.success("Pipeline completed successfully!")

@@ -72,6 +72,37 @@ class TradeMatcher:
             df["side"] = df["side"].astype(str).str.strip().str.upper()
             df["side"] = df["side"].replace({"B": "BUY", "LONG": "BUY", "S": "SELL", "SHORT": "SELL"})
 
+        if "quantity" in df.columns:
+            quantities = pd.to_numeric(df["quantity"], errors="raise")
+            if quantities.isna().any() or (quantities % 1 != 0).any():
+                raise ValueError("Execution quantity must be a whole number")
+            df["quantity"] = quantities.abs().astype("int64")
+
+        # Trust the underlying identified by the segment/symbol over a mistyped
+        # exchange value supplied by a spreadsheet or manual entry.
+        exchange_by_underlying = {
+            "SENSEX": "BSE",
+            "BANKNIFTY": "NSE",
+            "NIFTY": "NSE",
+            "FINNIFTY": "NSE",
+            "MIDCPNIFTY": "NSE",
+        }
+        known_underlyings = tuple(exchange_by_underlying)
+
+        def expected_exchange(row: pd.Series) -> Optional[str]:
+            for column in ("underlying", "segment", "vendor_symbol"):
+                raw_value = row.get(column, "")
+                value = "" if pd.isna(raw_value) else str(raw_value).upper()
+                underlying = next((name for name in known_underlyings if name in value), None)
+                if underlying:
+                    return exchange_by_underlying[underlying]
+            return None
+
+        if "exchange" not in df.columns:
+            df["exchange"] = pd.NA
+        expected_exchanges = df.apply(expected_exchange, axis=1)
+        df["exchange"] = expected_exchanges.where(expected_exchanges.notna(), df["exchange"])
+
         # Ensure execution_id
         if "execution_id" not in df.columns:
             df["execution_id"] = [str(uuid.uuid4()) for _ in range(len(df))]

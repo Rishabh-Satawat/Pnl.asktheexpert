@@ -26,6 +26,11 @@ class StageResult:
     errors: List[str] = field(default_factory=list)
     dataframes: Dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def error_message(self) -> str:
+        """Return errors as a single string for older UI/report consumers."""
+        return "; ".join(str(error) for error in self.errors)
+
 
 @dataclass
 class PipelineResult:

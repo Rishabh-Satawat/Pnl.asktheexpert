@@ -404,3 +404,12 @@ python -m playwright install chromium --with-deps
 - Start with this section and the git history for the reliability build. Keep local secrets, `.dbg/`, the SQLite backup, and pre-existing debug notes out of commits.
 - After deployment, verify a multi-strategy same-date batch, append one additional strategy to that date, open every Results tab, save, then download HTML and PDF.
 - Confirm the Streamlit Cloud Supabase credentials and schema are available before treating hosted persistence as verified. This local run did not verify a live Supabase transaction.
+
+## 9. MANUAL ENTRY ERROR REPORTING AND NORMALIZATION — 2026-09-24
+
+- Added `StageResult.error_message` as a backward-compatible property and made the failed-stage UI read errors safely, so an actual pipeline failure cannot be hidden by an `AttributeError` while rendering its diagnostic.
+- Manual CSV still passes through Stage 1 ingestion and Stage 2 parsing: Stage 1 wraps the manual rows as a source, and Stage 2 forwards those rows without requiring screenshots or invoking Gemini OCR. Do not ignore failures from these stages; they feed the execution pipeline. The reported manual-mode failure cause was therefore the missing `error_message` attribute, not the absence of screenshots.
+- Trade normalization now converts signed whole-number quantities to positive integers while preserving `side`, and derives the exchange from the recognized underlying (SENSEX → BSE; BANKNIFTY/NIFTY/FINNIFTY/MIDCPNIFTY → NSE).
+- Added regression coverage for the compatibility property, negative SELL quantity, and BANKNIFTY/SENSEX exchange correction.
+- Verification after this fix: `58 passed, 2 skipped` (PDF/Excel environment-dependent checks); `scripts/debug_manual_run.py` exited 0 with 4 executions, 2 matched trades, 0 open legs, ₹1,869 gross P&L, ₹124.83 charges, and ₹1,744.17 net P&L.
+- Fixture caveat: the four-execution fixture uses two SENSEX PE symbols, not a call-plus-put short strangle. It validates the reported matching/P&L vector, but not canonical strangle structure.
