@@ -399,7 +399,7 @@ python -m playwright install chromium --with-deps
 - Latest full test run after implementation: **64 passed, 2 skipped**. The skipped checks are environment-dependent Excel/PDF checks because `xlsxwriter` and Playwright are not installed in the active project interpreter. Python compilation succeeded with the workspace runtime.
 - The supplied PDF was visually inspected. It shows missing rupee glyphs, `0026` expiry dates, a `nanx` multiplier, `Test Strat` leakage, absent charts, extremely wide tables, and unused page space. A new Chromium PDF was not generated in this environment; verify the final downloadable PDF after installing Playwright/Chromium and deploying the Noto fonts.
 - No database schema or data file was edited in this pass; no new database backup was required. The app's next Stage 9 run rebuilds old equity rows with the new formula.
-- Current working branch when this section was written: `main`. Commit/push and live Streamlit Cloud verification are release steps, not completed by the test run. Do not stage the pre-existing `.env.example` edit, `.dbg/`, `.trae/documents/`, `debug-blank-results-tabs.md`, or temporary QA files.
+- The implementation was committed and pushed to `main` after the test run. GitHub accepted the push. Streamlit Cloud should redeploy if its app is connected to this repository/branch; the live deployment build was not independently confirmed. Do not stage the pre-existing `.env.example` edit, `.dbg/`, `.trae/documents/`, or `debug-blank-results-tabs.md` in later commits.
 
 ### Recommended next work, in order
 
