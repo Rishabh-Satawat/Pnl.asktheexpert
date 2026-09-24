@@ -1,19 +1,25 @@
+<!-- Legacy report design scaffold. DailyReportGenerator currently assembles the
+     active HTML directly; keep this scaffold aligned until it is wired in. -->
 <!DOCTYPE html>
 <html lang="en-IN">
 <head>
   <meta charset="UTF-8">
-  <title>Daily P&amp;L Report — <!-- REPORT_DATE_PLACEHOLDER --></title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <title>Daily P&amp;L Report - <!-- REPORT_DATE_PLACEHOLDER --></title>
   <style>
-    /* CSS is populated by report_engine.py from design_system.yaml; placeholders only */
-    html, body { margin: 0; padding: 0; background: #0B1426; color: #E2E8F0; font-family: 'Inter', sans-serif; }
+    /* Keep CSS self-contained: PDF generation must not depend on web fonts. */
+    html, body { margin: 0; padding: 0; background: #0B1426; color: #E2E8F0; font-family: 'Noto Sans', 'Segoe UI', Arial, sans-serif; }
+    .currency-symbol { font-family: 'Noto Sans', 'Segoe UI Symbol', sans-serif; }
     .page { padding: 18mm 14mm; }
     .report-section { margin-bottom: 24px; page-break-inside: avoid; }
+    .benchmark-ribbon { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .analytics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .embedded-chart { display: block; width: 100%; max-height: 280px; object-fit: contain; }
+    .table-scroll { overflow-x: auto; }
     .disclaimer-footer { font-size: 10px; font-weight: 700; opacity: 0.85; border-top: 1px solid #1E3A5F; padding-top: 10px; margin-top: 24px; }
     @media print {
+      html, body { background: #fff !important; color: #111827 !important; print-color-adjust: exact; }
       .page { padding: 0; }
+      h1, h2, h3 { color: #111827 !important; }
       .strategy-card { page-break-inside: avoid; break-inside: avoid; }
     }
   </style>
@@ -28,13 +34,15 @@
       <div class="sub">Daily Founder P&amp;L Report — <span id="report-date"><!-- REPORT_DATE_PLACEHOLDER --></span></div>
     </div>
     <div id="kpi-strip" class="kpi-tiles-grid">
+      <!-- KPI_TILE_CAPITAL_DEPLOYED -->
+      <!-- KPI_TILE_TOTAL_GROSS_PNL -->
+      <!-- KPI_TILE_TOTAL_CHARGES -->
       <!-- KPI_TILE_TOTAL_NET_PNL -->
+      <!-- KPI_TILE_GROSS_ROI -->
       <!-- KPI_TILE_NET_ROI -->
-      <!-- KPI_TILE_WIN_LOSS_COUNT -->
-      <!-- KPI_TILE_TOTAL_CAPITAL_DEPLOYED -->
-      <!-- KPI_TILE_TXN_COST_DRAG -->
-      <!-- KPI_TILE_STRATEGY_COUNT -->
     </div>
+    <h2>Market Benchmark Context</h2>
+    <div id="benchmark-ribbon" class="benchmark-ribbon"><!-- INDEX_BENCHMARK_RIBBON --></div>
   </section>
 
   <!-- SECTION 2: STRATEGY BREAKDOWN CARDS (Tradetron-like) -->
@@ -47,21 +55,21 @@
     </div>
   </section>
 
-  <!-- SECTION 3: VISUAL ANALYTICS QUAD (3 charts) -->
+  <!-- SECTION 3: EMBEDDED VISUAL ANALYTICS -->
   <section id="section-analytics" class="report-section">
     <h2>Visual Analytics</h2>
     <div class="analytics-grid">
       <div class="chart-panel">
         <h3>Segment Contribution</h3>
-        <!-- CHART_SEGMENT_DONUT -->
+        <!-- EMBEDDED_SEGMENT_CONTRIBUTION_CHART -->
       </div>
       <div class="chart-panel">
         <h3>Gross vs Net P&amp;L</h3>
-        <!-- CHART_GROSS_NET_BARS -->
+        <!-- EMBEDDED_GROSS_CHARGES_NET_CHART -->
       </div>
       <div class="chart-panel chart-full">
         <h3>Transaction Cost Waterfall</h3>
-        <!-- CHART_COST_WATERFALL -->
+        <!-- OPTIONAL_COST_WATERFALL_CHART -->
       </div>
     </div>
   </section>
