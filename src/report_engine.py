@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import csv
 import html as html_module
+import base64
+import math
 import os
 import sys
 from datetime import date, datetime
@@ -45,9 +47,35 @@ def _load_yaml(path: Path) -> dict:
 
 def _rupee(val: float) -> str:
     """Format a number as Indian Rupees."""
-    sign = "" if val >= 0 else "-"
-    formatted = f"{abs(val):,.2f}"
-    return f"{sign}\u20b9{formatted}"
+    try:
+        number = float(val)
+    except (TypeError, ValueError):
+        number = 0.0
+    if not math.isfinite(number):
+        number = 0.0
+    sign = "" if number >= 0 else "-"
+    formatted = f"{abs(number):,.2f}"
+    return f'{sign}<span class="currency-symbol">&#8377;</span>{formatted}'
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _fmt_time(value: Any) -> str:
+    if value is None or (HAS_PANDAS and pd.isna(value)):
+        return "—"
+    try:
+        return value.strftime("%I:%M %p")
+    except (AttributeError, ValueError):
+        try:
+            return pd.to_datetime(value).strftime("%I:%M %p") if HAS_PANDAS else str(value)
+        except Exception:
+            return str(value)
 
 
 def _pct(val: float) -> str:
@@ -75,13 +103,12 @@ def _status_pill_styles(status: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 _INLINE_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body {
   margin: 0; padding: 0;
   background: #0B1426; color: #E2E8F0;
-  font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Noto Sans', 'Inter', 'Segoe UI', Arial, sans-serif;
   font-size: 14px; line-height: 1.5;
 }
 .page { padding: 18mm 14mm; max-width: 1100px; margin: 0 auto; }
@@ -103,9 +130,21 @@ h3 { font-size: 14px; font-weight: 600; color: #CBD5E1; margin: 0 0 8px; }
 }
 .kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #94A3B8; margin-bottom: 6px; }
 .kpi-value { font-size: 22px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+.currency-symbol { font-family: 'Noto Sans', 'Segoe UI Symbol', sans-serif; font-weight: 600; }
 
 /* Strategy cards */
 .strategy-cards-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.benchmark-ribbon { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 20px; }
+.benchmark-item { background: rgba(18,31,61,0.72); border: 1px solid rgba(99,102,241,0.22); border-radius: 10px; padding: 10px 12px; }
+.benchmark-item span { display:block; color:#94A3B8; font-size:10px; letter-spacing:.04em; margin-bottom:4px; }
+.benchmark-item b { color:#E2E8F0; font-size:12px; }
+.timing-strip { display:flex; gap:16px; flex-wrap:wrap; margin:10px 0; color:#94A3B8; font-size:11px; }
+.timing-strip b { color:#E2E8F0; margin-left:3px; }
+.legs-details { margin-top:12px; border-top:1px solid #1E3A5F; padding-top:8px; }
+.legs-details summary { cursor:pointer; color:#A5B4FC; font-size:11px; }
+.legs-empty, .chart-empty { color:#94A3B8; font-size:11px; margin-top:10px; }
+.table-scroll { overflow-x:auto; }
+.embedded-chart { display:block; width:100%; max-height:280px; object-fit:contain; }
 .strategy-card {
   background: rgba(18,31,61,0.72);
   backdrop-filter: blur(18px) saturate(150%);
@@ -144,6 +183,7 @@ h3 { font-size: 14px; font-weight: 600; color: #CBD5E1; margin: 0 0 8px; }
 }
 .trade-table td { padding: 7px 10px; border-bottom: 1px solid rgba(30,58,95,0.4); color: #CBD5E1; }
 .trade-table tr:hover { background: rgba(99,102,241,0.06); }
+.trade-table th { white-space: nowrap; }
 
 /* Charges table */
 .charges-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -158,7 +198,13 @@ h3 { font-size: 14px; font-weight: 600; color: #CBD5E1; margin: 0 0 8px; }
 }
 
 @media print {
+  html, body { background: #fff !important; color: #111827 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .page { padding: 0; }
+  h1, h2, h3, .strategy-name { color: #111827 !important; }
+  .sub, .metric-label, .kpi-label { color: #475569 !important; }
+  .kpi-card, .strategy-card, .chart-panel { background: #fff !important; box-shadow: none !important; border-color: #cbd5e1 !important; }
+  .kpi-value, .metric-value { color: #111827 !important; }
+  .trade-table, .charges-table { color: #111827 !important; }
   .strategy-card { page-break-inside: avoid; break-inside: avoid; }
 }
 """
@@ -185,13 +231,16 @@ class DailyReportGenerator:
         charges_df: Any,
         chart_divs: Dict[str, str],
         disclaimer_text: str,
+        benchmark_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Return a complete HTML string with 6 sections."""
         report_date = daily_summary.get("report_date", str(date.today()))
 
         # --- KPI strip ---
-        total_net = daily_summary.get("total_net_pnl", 0.0)
-        net_roi = daily_summary.get("net_roi_pct", 0.0)
+        total_net = _safe_float(daily_summary.get("total_net_pnl"))
+        gross = _safe_float(daily_summary.get("total_gross_pnl"))
+        net_roi = _safe_float(daily_summary.get("net_roi_pct"))
+        gross_roi = _safe_float(daily_summary.get("gross_roi_pct"))
         wins = daily_summary.get("winning_strategies", 0)
         losses = daily_summary.get("losing_strategies", 0)
         capital = daily_summary.get("total_capital_deployed", 0.0)
@@ -199,19 +248,22 @@ class DailyReportGenerator:
         strat_count = daily_summary.get("strategy_count", 0)
 
         kpis_html = self._render_kpi_strip([
-            {"label": "Total Net P&L", "value": _rupee(total_net), "color": _pnl_color(total_net)},
-            {"label": "Net ROI", "value": _pct(net_roi), "color": _pnl_color(net_roi)},
-            {"label": "Win / Loss", "value": f"{wins}W / {losses}L", "color": "#E2E8F0"},
-            {"label": "Capital Deployed", "value": _rupee(capital), "color": "#E2E8F0"},
-            {"label": "Txn Cost Drag", "value": _rupee(txn_drag), "color": "#EF4444"},
-            {"label": "Strategies", "value": str(strat_count), "color": "#E2E8F0"},
+            {"label": "Capital Deployed (Peak)", "value": _rupee(capital), "color": "#E2E8F0", "html": True},
+            {"label": "Total Gross P&L", "value": _rupee(gross), "color": _pnl_color(gross), "html": True},
+            {"label": "Brokerage & Statutory Charges", "value": _rupee(txn_drag), "color": "#EF4444", "html": True},
+            {"label": "Total Net P&L", "value": _rupee(total_net), "color": _pnl_color(total_net), "html": True},
+            {"label": "Day Gross ROI", "value": _pct(gross_roi), "color": _pnl_color(gross_roi)},
+            {"label": "Day Net ROI", "value": _pct(net_roi), "color": _pnl_color(net_roi)},
         ])
 
         # --- Strategy cards ---
-        strat_html = self._render_strategy_cards(strategy_runs_df)
+        strat_html = self._render_strategy_cards(strategy_runs_df, matched_trades_df)
 
         # --- Charts ---
+        if not chart_divs:
+            chart_divs = self._build_embedded_charts(strategy_runs_df)
         charts_html = self._render_charts_section(chart_divs)
+        benchmark_html = self._render_benchmark_ribbon(benchmark_context or {})
 
         # --- Trade log ---
         trade_log_html = self._render_trade_log(matched_trades_df)
@@ -237,6 +289,7 @@ class DailyReportGenerator:
     <h1>{html_module.escape(self.desk_name)}</h1>
     <div class="sub">Daily Founder P&amp;L Report &mdash; {html_module.escape(str(report_date))}</div>
     {kpis_html}
+    {benchmark_html}
   </section>
 
   <!-- SECTION 2: Strategy Breakdown -->
@@ -286,12 +339,12 @@ class DailyReportGenerator:
             sub_html = f'<div style="font-size:10px;color:#64748B;margin-top:4px;">{html_module.escape(subtitle)}</div>' if subtitle else ""
             tiles.append(f"""<div class="kpi-card">
   <div class="kpi-label">{html_module.escape(k["label"])}</div>
-  <div class="kpi-value" style="color:{k['color']}">{html_module.escape(k["value"])}</div>
+  <div class="kpi-value" style="color:{k['color']}">{k["value"] if k.get("html") else html_module.escape(k["value"])}</div>
   {sub_html}
 </div>""")
         return f'<div class="kpi-tiles-grid">{"".join(tiles)}</div>'
 
-    def _render_strategy_cards(self, strategy_runs_df: Any) -> str:
+    def _render_strategy_cards(self, strategy_runs_df: Any, matched_trades_df: Any = None) -> str:
         if strategy_runs_df is None or (HAS_PANDAS and isinstance(strategy_runs_df, pd.DataFrame) and strategy_runs_df.empty):
             return '<div style="color:#64748B;">No strategy data available.</div>'
 
@@ -299,15 +352,36 @@ class DailyReportGenerator:
         rows = strategy_runs_df.to_dict("records") if HAS_PANDAS else []
         for row in rows:
             name = row.get("strategy_name", "Unknown")
-            multiplier = row.get("multiplier", 1)
+            if str(name).strip().casefold() == "test strat":
+                continue
+            multiplier = _safe_float(row.get("multiplier_x", row.get("multiplier", 1.0)), 1.0)
+            if multiplier <= 0:
+                multiplier = 1.0
             status = row.get("deployment_status", "LIVE")
-            gross = row.get("booked_gross_pnl", 0.0)
-            charges = row.get("allocated_charges_total", 0.0)
-            net = row.get("net_pnl", gross - charges)
-            cap = row.get("capital_deployed_allocated", 0.0)
-            roi = row.get("net_roi_pct", 0.0)
-            segment = row.get("underlying_segment", "UNKNOWN")
+            gross = _safe_float(row.get("booked_gross_pnl"))
+            charges = _safe_float(row.get("allocated_charges_total"))
+            net = _safe_float(row.get("net_pnl"), gross - charges)
+            cap = _safe_float(row.get("capital_deployed_allocated"))
+            roi = _safe_float(row.get("net_roi_pct"))
+            segment = row.get("underlying_segment") or row.get("underlying") or row.get("segment") or "UNKNOWN"
             seg_color = self.segment_palette.get(segment, "#94A3B8")
+
+            trades = []
+            if HAS_PANDAS and isinstance(matched_trades_df, pd.DataFrame) and not matched_trades_df.empty:
+                run_id = row.get("strategy_run_id", row.get("id"))
+                if run_id is not None and "strategy_run_id" in matched_trades_df:
+                    trades = matched_trades_df[
+                        matched_trades_df["strategy_run_id"].astype(str) == str(run_id)
+                    ].to_dict("records")
+            entry_times = [t.get("entry_time") for t in trades if t.get("entry_time") is not None and not (HAS_PANDAS and pd.isna(t.get("entry_time")))]
+            exit_times = [t.get("exit_time") for t in trades if t.get("exit_time") is not None and not (HAS_PANDAS and pd.isna(t.get("exit_time")))]
+            entry = min(entry_times) if entry_times else row.get("entry_timestamp_ist")
+            exit_ = max(exit_times) if exit_times else row.get("exit_timestamp_ist")
+            duration = sum(_safe_float(t.get("holding_duration_minutes")) for t in trades)
+            timing_html = f'''<div class="timing-strip"><span>Entry <b>{html_module.escape(_fmt_time(entry))}</b></span>
+              <span>Exit <b>{html_module.escape(_fmt_time(exit_))}</b></span>
+              <span>Matched duration <b>{duration / 60:.1f}h</b></span></div>'''
+            legs_html = self._render_strategy_legs(trades)
 
             status_bg, status_color = _status_pill_styles(status)
 
@@ -315,10 +389,11 @@ class DailyReportGenerator:
   <div class="strategy-header">
     <div>
       <span class="strategy-name">{html_module.escape(str(name))}</span>
-      <span class="multiplier-chip">{multiplier}x</span>
+      <span class="multiplier-chip">{multiplier:g}x</span>
     </div>
     <span class="status-pill" style="background:{status_bg};color:{status_color};">{html_module.escape(str(status))}</span>
   </div>
+  {timing_html}
   <div class="metrics-grid">
     <div><div class="metric-label">Gross P&amp;L</div><div style="color:{_pnl_color(gross)};font-weight:600;">{_rupee(gross)}</div></div>
     <div><div class="metric-label">Charges</div><div style="color:#EF4444;font-weight:600;">{_rupee(charges)}</div></div>
@@ -327,8 +402,86 @@ class DailyReportGenerator:
     <div><div class="metric-label">Net ROI</div><div style="color:{_pnl_color(roi)};font-weight:600;">{_pct(roi)}</div></div>
     <div><div class="metric-label">Segment</div><div style="color:{seg_color};font-weight:600;">{html_module.escape(str(segment))}</div></div>
   </div>
+  {legs_html}
 </div>""")
         return "\n".join(cards)
+
+    def _render_strategy_legs(self, trades: List[Dict[str, Any]]) -> str:
+        if not trades:
+            return '<div class="legs-empty">No matched execution detail available for this strategy.</div>'
+        rows = []
+        for trade in trades:
+            expiry = trade.get("expiry_date")
+            if hasattr(expiry, "isoformat"):
+                expiry = expiry.isoformat()
+            symbol = html_module.escape(str(trade.get("vendor_symbol", trade.get("instrument", "—"))))
+            rows.append("<tr>" + "".join(f"<td>{html_module.escape(str(value if value is not None else '—'))}</td>" for value in (
+                symbol, trade.get("option_type", "—"), trade.get("strike_price", "—"), trade.get("side", "—"),
+                trade.get("quantity", trade.get("qty", "—")), trade.get("entry_price", trade.get("price", "—")),
+                trade.get("exit_price", "—"), f"{_safe_float(trade.get('gross_pnl')):,.2f}", expiry or "—",
+            )) + "</tr>")
+        return ('<details class="legs-details"><summary>Matched legs &amp; execution details</summary>'
+                '<div class="table-scroll"><table class="trade-table"><thead><tr><th>Symbol</th><th>Type</th><th>Strike</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Leg P&amp;L</th><th>Expiry</th></tr></thead>'
+                f'<tbody>{"".join(rows)}</tbody></table></div></details>')
+
+    def _render_benchmark_ribbon(self, context: Dict[str, Any]) -> str:
+        labels = (("NIFTY 50", "nifty"), ("BANK NIFTY", "banknifty"), ("SENSEX", "sensex"), ("INDIA VIX", "india_vix"))
+        items = []
+        for label, key in labels:
+            value = context.get(key)
+            if not isinstance(value, dict) or not value:
+                display = "Not supplied"
+            elif key == "india_vix":
+                display = f"{_safe_float(value.get('close')):,.2f} ({_safe_float(value.get('change_pct')):+.2f}%)"
+            else:
+                display = f"{_safe_float(value.get('points')):+,.2f} pts ({_safe_float(value.get('change_pct')):+.2f}%)"
+            items.append(f'<div class="benchmark-item"><span>{label}</span><b>{html_module.escape(display)}</b></div>')
+        return '<h2>Market Benchmark Context</h2><div class="benchmark-ribbon">' + "".join(items) + '</div>'
+
+    def _build_embedded_charts(self, strategies_df: Any) -> Dict[str, str]:
+        """Generate portable inline SVG charts (no remote JS or image service)."""
+        if not HAS_PANDAS or not isinstance(strategies_df, pd.DataFrame) or strategies_df.empty:
+            return {}
+        data = strategies_df.copy()
+        if "strategy_name" in data:
+            data = data[data["strategy_name"].astype(str).str.casefold() != "test strat"]
+        if data.empty:
+            return {}
+        segments = data.groupby(data.get("underlying_segment", pd.Series(["Strategy"] * len(data))).fillna("Strategy")).agg(
+            pnl=("net_pnl", "sum") if "net_pnl" in data else ("booked_gross_pnl", "sum")
+        )
+        palette = ["#10B981", "#38BDF8", "#F59E0B", "#A78BFA", "#F472B6"]
+        total = sum(abs(_safe_float(v)) for v in segments["pnl"])
+        if total:
+            circumference = 2 * math.pi * 58
+            offset = 0.0
+            circles = []
+            for idx, (name, amount) in enumerate(segments["pnl"].items()):
+                portion = abs(_safe_float(amount)) / total * circumference
+                circles.append(f'<circle cx="100" cy="100" r="58" fill="none" stroke="{palette[idx % len(palette)]}" stroke-width="22" stroke-dasharray="{portion:.2f} {circumference - portion:.2f}" stroke-dashoffset="{-offset:.2f}"/>')
+                offset += portion
+            donut_svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Strategy contribution donut"><rect width="200" height="200" fill="#0B1426" rx="12"/>' + "".join(circles) + '<text x="100" y="96" text-anchor="middle" fill="#F8FAFC" font-size="12" font-family="sans-serif">Net P&amp;L</text><text x="100" y="116" text-anchor="middle" fill="#94A3B8" font-size="10" font-family="sans-serif">by strategy</text></svg>'
+            donut = self._svg_data_uri(donut_svg)
+        else:
+            donut = '<div class="chart-empty">No non-zero contribution values.</div>'
+        gross = sum(_safe_float(v) for v in data.get("booked_gross_pnl", []))
+        charges = sum(_safe_float(v) for v in data.get("allocated_charges_total", []))
+        net = sum(_safe_float(v) for v in data.get("net_pnl", []))
+        values = [gross, -charges, net]
+        max_abs = max([abs(v) for v in values] + [1.0])
+        bars = []
+        for idx, (label, value) in enumerate(zip(("Gross", "Charges", "Net"), values)):
+            height = max(3, abs(value) / max_abs * 100)
+            color = "#EF4444" if value < 0 else ("#38BDF8" if idx == 2 else "#10B981")
+            y = 140 - height
+            bars.append(f'<rect x="{35 + idx * 105}" y="{y:.1f}" width="56" height="{height:.1f}" rx="5" fill="{color}"/><text x="{63 + idx * 105}" y="164" text-anchor="middle" fill="#CBD5E1" font-size="11" font-family="sans-serif">{label}</text><text x="{63 + idx * 105}" y="{max(14, y - 5):.1f}" text-anchor="middle" fill="#F8FAFC" font-size="9" font-family="sans-serif">&#8377;{abs(value):,.0f}</text>')
+        waterfall_svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 190" role="img" aria-label="Gross, charges and net P&amp;L chart"><rect width="360" height="190" fill="#0B1426" rx="12"/><line x1="20" y1="140" x2="340" y2="140" stroke="#475569"/>' + "".join(bars) + '</svg>'
+        return {"Strategy Contribution": donut, "Gross / Charges / Net": self._svg_data_uri(waterfall_svg)}
+
+    @staticmethod
+    def _svg_data_uri(svg: str) -> str:
+        encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+        return f'<img class="embedded-chart" alt="P&amp;L chart" src="data:image/svg+xml;base64,{encoded}">'
 
     def _render_charts_section(self, chart_divs: Dict[str, str]) -> str:
         if not chart_divs:
@@ -343,25 +496,56 @@ class DailyReportGenerator:
         if matched_trades_df is None or (HAS_PANDAS and isinstance(matched_trades_df, pd.DataFrame) and matched_trades_df.empty):
             return '<div style="color:#64748B;">No trade data.</div>'
 
-        cols = list(matched_trades_df.columns)
+        preferred = ["trade_date", "segment", "vendor_symbol", "option_type", "expiry_date", "strike_price", "side", "quantity", "entry_price", "exit_price", "gross_pnl", "holding_duration_minutes"]
+        cols = [col for col in preferred if col in matched_trades_df.columns]
+        if not cols:
+            cols = list(matched_trades_df.columns[:12])
         header = "".join(f"<th>{html_module.escape(str(c))}</th>" for c in cols)
         rows_html = []
         for _, row in matched_trades_df.iterrows():
-            cells = "".join(f"<td>{html_module.escape(str(row[c]))}</td>" for c in cols)
+            cells_list = []
+            for col in cols:
+                value = row[col]
+                if HAS_PANDAS and pd.isna(value):
+                    value = "—"
+                elif col in {"trade_date", "expiry_date"} and hasattr(value, "strftime"):
+                    value = value.strftime("%d %b %Y")
+                if col in {"entry_price", "exit_price", "gross_pnl"}:
+                    cells_list.append(f"<td>{_rupee(value)}</td>")
+                else:
+                    cells_list.append(f"<td>{html_module.escape(str(value))}</td>")
+            cells = "".join(cells_list)
             rows_html.append(f"<tr>{cells}</tr>")
-        return f'<table class="trade-table"><thead><tr>{header}</tr></thead><tbody>{"".join(rows_html)}</tbody></table>'
+        return f'<div class="table-scroll"><table class="trade-table"><thead><tr>{header}</tr></thead><tbody>{"".join(rows_html)}</tbody></table></div>'
 
     def _render_charges_table(self, charges_df: Any) -> str:
         if charges_df is None or (HAS_PANDAS and isinstance(charges_df, pd.DataFrame) and charges_df.empty):
             return '<div style="color:#64748B;">No charges data.</div>'
 
-        cols = list(charges_df.columns)
+        frame = charges_df.copy()
+        amount_columns = [c for c in ("brokerage", "exchange_turnover_fee", "stt", "sebi_turnover_charges", "stamp_duty", "gst", "ipft", "slippage", "total_charges") if c in frame]
+        if amount_columns:
+            frame = frame.dropna(how="all", subset=amount_columns)
+        if frame.empty:
+            return '<div style="color:#64748B;">No reconciled charge rows available.</div>'
+        preferred = ["report_date", "strategy_run_uuid", "charge_source", "brokerage", "exchange_turnover_fee", "stt", "sebi_turnover_charges", "stamp_duty", "gst", "ipft", "slippage", "total_charges"]
+        cols = [col for col in preferred if col in frame.columns]
+        if not cols:
+            cols = list(frame.columns[:12])
         header = "".join(f"<th>{html_module.escape(str(c))}</th>" for c in cols)
         rows_html = []
-        for _, row in charges_df.iterrows():
-            cells = "".join(f"<td>{html_module.escape(str(row[c]))}</td>" for c in cols)
+        for _, row in frame.iterrows():
+            cells_list = []
+            for col in cols:
+                value = row[col]
+                if col in amount_columns:
+                    cells_list.append(f"<td>{_rupee(value)}</td>")
+                else:
+                    text = "—" if value is None or (HAS_PANDAS and pd.isna(value)) or str(value).strip().casefold() in {"none", "nan", "nat"} else str(value)
+                    cells_list.append(f"<td>{html_module.escape(text)}</td>")
+            cells = "".join(cells_list)
             rows_html.append(f"<tr>{cells}</tr>")
-        return f'<table class="charges-table"><thead><tr>{header}</tr></thead><tbody>{"".join(rows_html)}</tbody></table>'
+        return f'<div class="table-scroll"><table class="charges-table"><thead><tr>{header}</tr></thead><tbody>{"".join(rows_html)}</tbody></table></div>'
 
 
 # ---------------------------------------------------------------------------

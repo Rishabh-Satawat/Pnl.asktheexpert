@@ -379,6 +379,39 @@ python -m playwright install chromium --with-deps
 
 ---
 
+## 11. REPORTING AND HISTORICAL QUANT TERMINAL — 2026-09-24
+
+### Work completed in this reliability/analytics pass
+
+- Fixed four-digit Tradetron expiry parsing. The vendor symbol `OPTIDX_BANKNIFTY_29SEP2026_PE_56100` now retains `2026-09-29`; the old parser incorrectly applied `% 100` and produced year `0026`.
+- Reworked the daily founder report to use HTML currency entities and a local system-font fallback; `fonts-noto-core` is included in `packages.txt` for the Streamlit Debian runtime. The report print stylesheet switches to a light, paper-friendly palette.
+- The report KPI row now includes deployed capital, gross P&L, realized/formula charges, net P&L, gross ROI, and net ROI. Optional index/VIX fields are user-entered and clearly show “Not supplied” when blank.
+- Strategy cards now sanitize NaN/missing multiplier values, omit the exact fixture name `Test Strat` from reports only (no database deletion), show available entry/exit/holding timing, and include matched-leg details. The wide raw trade/charge dump was replaced with a narrower, scrollable report table.
+- Empty chart inputs now cause local SVG segment-contribution and gross/charges/net charts to be generated and embedded as data URIs. This avoids remote chart scripts or image services during PDF generation. HTML export remains independent of PDF runtime availability.
+- `ui/page_historical.py` now reads strategy runs and charges from the configured Supabase store, then SQLite fallback. Strategy and segment filters drive daily totals and the analytics modules. It contains a weekday-only monthly calendar with weekly totals, a strategy leaderboard, weekday profitability, and account-equity/drawdown visualization.
+- Historical drawdown uses `account base + cumulative net P&L`. For persisted equity rows the migration-free rebuild uses the first saved day's peak deployed capital as a **reference baseline**; the dashboard lets the operator enter actual account base capital. Do not describe first-day deployed capital as verified account equity.
+- The TradingView terminal uses the official Advanced Chart embed. Its selected chart still depends on the selected symbol being available in TradingView's widget market data and the user's browser allowing the third-party chart.
+- Historical benchmark curves, FII/DII cash-flow plots, and VIX/CPR/range regime labels accept user-uploaded CSV context. No source was available in this project to truthfully persist or auto-fetch historical index closes, participant flows, IV, or CPR values. Uploaded values are session inputs, not permanent database records.
+- Matched-trade CSV includes holding duration where timestamps exist, plus blank MFE/MAE/slippage fields for future enrichment. These values must stay blank until timestamp-aligned tick/candle and execution-reference data is integrated; do not infer them from entry/exit fills.
+
+### Verification and handover status
+
+- Latest full test run after implementation: **64 passed, 2 skipped**. The skipped checks are environment-dependent Excel/PDF checks because `xlsxwriter` and Playwright are not installed in the active project interpreter. Python compilation succeeded with the workspace runtime.
+- The supplied PDF was visually inspected. It shows missing rupee glyphs, `0026` expiry dates, a `nanx` multiplier, `Test Strat` leakage, absent charts, extremely wide tables, and unused page space. A new Chromium PDF was not generated in this environment; verify the final downloadable PDF after installing Playwright/Chromium and deploying the Noto fonts.
+- No database schema or data file was edited in this pass; no new database backup was required. The app's next Stage 9 run rebuilds old equity rows with the new formula.
+- Current working branch when this section was written: `main`. Commit/push and live Streamlit Cloud verification are release steps, not completed by the test run. Do not stage the pre-existing `.env.example` edit, `.dbg/`, `.trae/documents/`, `debug-blank-results-tabs.md`, or temporary QA files.
+
+### Recommended next work, in order
+
+1. Install the project's complete development dependencies, including Playwright Chromium and `xlsxwriter`; generate and visually verify HTML and PDF exports on Windows and Streamlit Cloud.
+2. In the deployed app, enter a 2–4-strategy date, save it, append another strategy to the same date, and verify Supabase + SQLite records, summary totals, and export files.
+3. Add an explicit account-level starting-capital setting stored per authenticated account; migrate historical drawdown baselines from the provisional first-day deployed-capital reference.
+4. Add an exchange-licensed market-data adapter with source, timestamp, timezone, symbol, and revision metadata. Persist daily underlying closes, intraday OHLC, India VIX, CPR inputs, and—if permitted—official cash-market FII/DII flows.
+5. Once path data exists, calculate MFE/MAE, execution slippage against a declared quote benchmark, time-in-trade, IV/regime-conditioned expectancy, and properly matched strategy-versus-index alpha.
+6. Before multi-user production, add owner/account isolation through the schema and Supabase Row Level Security. The existing trading tables do not have tenant ownership keys.
+
+---
+
 ## 8. RELIABILITY BUILD HANDOVER — 2026-09-24
 
 ### Current implementation

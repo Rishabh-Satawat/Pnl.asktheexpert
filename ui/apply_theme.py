@@ -19,6 +19,15 @@ def inject_custom_css() -> None:
     html, body, [class*="css"] {
         font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
     }
+    h1, h2, h3, h4, [data-testid="stHeader"] {
+        font-family: 'Inter', 'Segoe UI', Arial, sans-serif !important;
+        line-height: 1.25 !important;
+        letter-spacing: normal !important;
+        overflow-wrap: anywhere;
+    }
+    h1 { font-size: clamp(1.65rem, 2.4vw, 2.25rem) !important; }
+    h2 { font-size: clamp(1.3rem, 1.8vw, 1.7rem) !important; }
+    h3 { font-size: clamp(1.05rem, 1.4vw, 1.3rem) !important; }
     code, pre, .stCode, [data-testid="stCode"] {
         font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace !important;
     }

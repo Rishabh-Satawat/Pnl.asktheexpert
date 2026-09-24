@@ -248,7 +248,9 @@ def parse_indian_symbol(
             raise SymbolParseError(f"Unknown month abbreviation {mon_str!r} in {raw!r}")
 
         strike = float(strike_str) if strike_str else 0.0
-        expiry = _lookup_expiry_date(underlying, year % 100, month_int, day, market_knowledge)
+        # The vendor token is already a four-digit Gregorian year (e.g. 2026).
+        # Passing year % 100 created year 0026 in reports and persisted records.
+        expiry = _lookup_expiry_date(underlying, year, month_int, day, market_knowledge)
 
         # Infer exchange and segment from underlying
         u = underlying.upper()
@@ -426,6 +428,8 @@ def _parse_tradetron_display(raw: str, mk: Optional[MarketKnowledge], as_of_year
         "strike_price": strike_price,
         "option_type": suf_tok,
         "instrument_type": _instrument_type(underlying, suf_tok),
+        "exchange": "BSE" if underlying == "SENSEX" else "NSE",
+        "segment": underlying,
         "raw_symbol": raw,
     }
 

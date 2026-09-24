@@ -156,6 +156,13 @@ def test_tradetron_display_space_separated(mk):
     assert r["instrument_type"] == "OPTIDX"
 
 
+def test_tradetron_vendor_symbol_preserves_four_digit_expiry_year(mk):
+    parsed = parse_indian_symbol("OPTIDX_BANKNIFTY_29SEP2026_PE_56100", market_knowledge=mk)
+    assert parsed["expiry_date"] == date(2026, 9, 29)
+    assert parsed["segment"] == "BANKNIFTY"
+    assert parsed["exchange"] == "NSE"
+
+
 def test_guesses_underlying_from_prefix_cases():
     """Prefix guess fallback for stage 2 classification (fail-closed stage 1 only)."""
     assert guesses_underlying_from_prefix("NIFTY2692424000CE") == "NIFTY"

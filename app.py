@@ -79,6 +79,7 @@ page = st.sidebar.radio(
     [
         "\U0001f4f8 Daily Processing",
         "\U0001f4ca Historical Dashboard",
+        "\U0001f4c8 Market Charts & TradingView Terminal",
         "\U0001f9e0 Settings & Knowledge Base",
         "\u2699\ufe0f Audit & Reconciliation",
     ],
@@ -92,6 +93,10 @@ elif page == "\U0001f4ca Historical Dashboard":
     from ui.page_historical import render_historical_dashboard
 
     render_historical_dashboard()
+elif page == "\U0001f4c8 Market Charts & TradingView Terminal":
+    from ui.page_market import render_market_terminal
+
+    render_market_terminal()
 elif page == "\U0001f9e0 Settings & Knowledge Base":
     from ui.page_settings import render_settings
 

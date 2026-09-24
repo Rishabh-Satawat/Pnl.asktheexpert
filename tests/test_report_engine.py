@@ -136,6 +136,25 @@ class TestTR10_1_HTML:
 
         print("[PASS] TR-10.1: HTML contains 6 sections, FR-13 disclaimer, and plotly chart div")
 
+    def test_founder_report_uses_finite_multipliers_currency_entity_and_embedded_charts(self) -> None:
+        runs = _make_strategy_runs_df()
+        runs.loc[0, "multiplier_x"] = float("nan")
+        runs.loc[0, "underlying_segment"] = "NIFTY"
+        runs.loc[1, "strategy_name"] = "Test Strat"
+        html_out = DailyReportGenerator().render_daily_html(
+            daily_summary={**_make_daily_summary(), "total_gross_pnl": 8000, "gross_roi_pct": 1.0},
+            strategy_runs_df=runs,
+            matched_trades_df=_make_trades_df(),
+            charges_df=_make_charges_df(),
+            chart_divs={},
+            disclaimer_text=_FR13_DISCLAIMER,
+        )
+        assert "nanx" not in html_out.lower()
+        assert "Test Strat" not in html_out
+        assert "&#8377;" in html_out
+        assert "data:image/svg+xml;base64," in html_out
+        assert "No charts generated." not in html_out
+
 
 # ---------------------------------------------------------------------------
 # TR-10.2: Excel has 5 sheets, Trade Log has data

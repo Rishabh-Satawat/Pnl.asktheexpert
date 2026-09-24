@@ -899,6 +899,19 @@ class DailyPipelineOrchestrator:
             sess = SessionLocal()
             try:
                 start_date = extend_from_date or report_date
+                first_summary = (
+                    sess.query(DailySummary)
+                    .order_by(DailySummary.report_date.asc())
+                    .first()
+                )
+                # Rebuild from the first saved report so legacy profit-only
+                # drawdowns are replaced with account-equity drawdowns.
+                if first_summary is not None and first_summary.report_date < start_date:
+                    start_date = first_summary.report_date
+                base_capital = (
+                    float(first_summary.total_capital_deployed_peak or 0.0)
+                    if first_summary is not None else 0.0
+                )
                 summaries = (
                     sess.query(DailySummary)
                     .filter(DailySummary.report_date >= start_date)
@@ -908,7 +921,7 @@ class DailyPipelineOrchestrator:
 
                 # Get prior cumulative from day before start_date
                 prior_cumulative = 0.0
-                prior_peak = 0.0
+                prior_peak = base_capital
                 prior_row = (
                     sess.query(EquityCurve)
                     .filter(EquityCurve.report_date < start_date)
@@ -917,7 +930,8 @@ class DailyPipelineOrchestrator:
                 )
                 if prior_row is not None:
                     prior_cumulative = float(prior_row.cumulative_net_pnl)
-                    prior_peak = float(prior_row.peak_equity)
+                    prior_peak = max(float(prior_row.peak_equity or 0.0), base_capital)
+                    base_capital = float(prior_row.running_capital_base or base_capital)
 
                 # Also gather win counts for rolling 30d
                 thirty_days_ago = start_date - timedelta(days=30)
@@ -942,11 +956,12 @@ class DailyPipelineOrchestrator:
                 for summary in summaries:
                     daily_net = float(summary.total_net_pnl)
                     cumulative += daily_net
-                    if cumulative > peak_equity:
-                        peak_equity = cumulative
+                    total_equity = base_capital + cumulative
+                    if total_equity > peak_equity:
+                        peak_equity = total_equity
                     drawdown_pct = 0.0
                     if peak_equity > 0:
-                        drawdown_pct = ((peak_equity - cumulative) / peak_equity) * 100.0
+                        drawdown_pct = ((peak_equity - total_equity) / peak_equity) * 100.0
 
                     # Rolling 30d win rate
                     d30_start = summary.report_date - timedelta(days=30)
@@ -972,6 +987,9 @@ class DailyPipelineOrchestrator:
                         existing.cumulative_net_pnl = cumulative
                         existing.peak_equity = peak_equity
                         existing.drawdown_pct = drawdown_pct
+                        existing.running_capital_base = base_capital
+                        existing.daily_net_roi_pct = daily_net / base_capital * 100.0 if base_capital > 0 else None
+                        existing.cumulative_net_roi_pct = cumulative / base_capital * 100.0 if base_capital > 0 else None
                         existing.running_win_rate_30d = win_rate_30d
                         existing.updated_at = datetime.utcnow()
                     else:
@@ -981,6 +999,9 @@ class DailyPipelineOrchestrator:
                             cumulative_net_pnl=cumulative,
                             peak_equity=peak_equity,
                             drawdown_pct=drawdown_pct,
+                            running_capital_base=base_capital,
+                            daily_net_roi_pct=daily_net / base_capital * 100.0 if base_capital > 0 else None,
+                            cumulative_net_roi_pct=cumulative / base_capital * 100.0 if base_capital > 0 else None,
                             running_win_rate_30d=win_rate_30d,
                         )
                         sess.add(ec)
@@ -988,6 +1009,7 @@ class DailyPipelineOrchestrator:
                         "report_date": summary.report_date,
                         "daily_net_pnl": daily_net,
                         "cumulative_net_pnl": cumulative,
+                        "total_equity": total_equity,
                         "peak_equity": peak_equity,
                         "drawdown_pct": drawdown_pct,
                         "running_win_rate_30d": win_rate_30d,

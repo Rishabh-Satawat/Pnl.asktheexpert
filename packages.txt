@@ -12,3 +12,4 @@ libxrandr2
 libgbm1
 libasound2
 fonts-liberation
+fonts-noto-core

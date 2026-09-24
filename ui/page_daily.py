@@ -26,6 +26,25 @@ def render_daily_processing() -> None:
     # ── Date Picker ───────────────────────────────────────────────
     report_date = st.date_input("Trading Date", value=date.today())
     st.session_state["report_date"] = report_date
+    with st.expander("Optional market benchmark context for the report", expanded=False):
+        st.caption("Enter official closing moves if you want them printed in the report. Blank fields remain clearly marked as not supplied.")
+        benchmark_values = {}
+        for label, key, fields in (
+            ("NIFTY 50", "nifty", ("Points move", "Percent move")),
+            ("BANK NIFTY", "banknifty", ("Points move", "Percent move")),
+            ("SENSEX", "sensex", ("Points move", "Percent move")),
+            ("INDIA VIX", "india_vix", ("Close", "Percent change")),
+        ):
+            left, right = st.columns(2)
+            with left:
+                first = st.text_input(f"{label} - {fields[0]}", key=f"benchmark_{key}_first", placeholder="Leave blank if unknown")
+            with right:
+                second = st.text_input(f"{label} - {fields[1]}", key=f"benchmark_{key}_second", placeholder="Leave blank if unknown")
+            parsed = [_parse_optional_number(first), _parse_optional_number(second)]
+            if any(value is not None for value in parsed):
+                benchmark_values[key] = ({"close": parsed[0], "change_pct": parsed[1]} if key == "india_vix"
+                                         else {"points": parsed[0], "change_pct": parsed[1]})
+        st.session_state["daily_benchmark_context"] = benchmark_values
     st.selectbox(
         "When this date already has saved trades",
         ["Append new strategies", "Replace saved report for this date"],
@@ -570,6 +589,9 @@ def render_daily_processing() -> None:
                         zf.writestr("strategy_runs.csv", pr.strategy_runs_df.to_csv(index=False))
                     if pr.charges_df is not None and not pr.charges_df.empty:
                         zf.writestr("charges.csv", pr.charges_df.to_csv(index=False))
+                    matched_trades = getattr(pr, "matched_trades_df", None)
+                    if matched_trades is not None and not matched_trades.empty:
+                        zf.writestr("matched_trades_quant.csv", _quant_trade_export(matched_trades).to_csv(index=False))
                     if isinstance(pr.daily_summary_df, dict):
                         zf.writestr("summary.csv", __import__("pandas").DataFrame([pr.daily_summary_df]).to_csv(index=False))
                 st.download_button("📁 Download CSVs", data=zip_buf.getvalue(),
@@ -607,7 +629,17 @@ def _build_report_html(pipeline_result, report_date) -> str:
         "losing_strategies": summary.get("loss_count", 0),
         "total_capital_deployed": summary.get("peak_capital_deployed", summary.get("total_capital_deployed_peak", 0)),
         "total_charges": summary.get("total_allocated_charges", summary.get("total_transaction_cost_drag", 0)),
-        "strategy_count": len(pipeline_result.strategy_runs_df) if pipeline_result.strategy_runs_df is not None else 0,
+        "total_gross_pnl": summary.get("total_gross_pnl", 0),
+        "gross_roi_pct": summary.get("portfolio_day_gross_roi_pct", (
+            float(summary.get("total_gross_pnl", 0) or 0)
+            / float(summary.get("peak_capital_deployed", summary.get("total_capital_deployed_peak", 0)) or 1)
+            * 100
+        )),
+        "strategy_count": (
+            int((pipeline_result.strategy_runs_df["strategy_name"].astype(str).str.casefold() != "test strat").sum())
+            if pipeline_result.strategy_runs_df is not None and "strategy_name" in pipeline_result.strategy_runs_df
+            else (len(pipeline_result.strategy_runs_df) if pipeline_result.strategy_runs_df is not None else 0)
+        ),
     })
     return DailyReportGenerator().render_daily_html(
         daily_summary=summary,
@@ -616,7 +648,29 @@ def _build_report_html(pipeline_result, report_date) -> str:
         charges_df=pipeline_result.charges_df,
         chart_divs={},
         disclaimer_text="Trading involves risk. This report is for record keeping and is not investment advice.",
+        benchmark_context=st.session_state.get("daily_benchmark_context", {}),
     )
+
+
+def _parse_optional_number(value):
+    """Parse a manually entered market value without turning blanks into zero."""
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return float(str(value).replace(",", "").replace("%", "").strip())
+    except ValueError:
+        return None
+
+
+def _quant_trade_export(matched_trades_df):
+    """Add audit-ready fields without inventing unobserved tick-based values."""
+    export = matched_trades_df.copy()
+    if "holding_duration_minutes" not in export:
+        export["holding_duration_minutes"] = pd.NA
+    for column in ("mfe_inr", "mae_inr", "entry_slippage_points", "exit_slippage_points"):
+        if column not in export:
+            export[column] = pd.NA
+    return export
 
 
 def _build_report_pdf(html_str: str) -> tuple[bytes | None, str | None]:
