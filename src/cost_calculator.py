@@ -46,7 +46,7 @@ DEFAULT_SCHEDULE_DICT: Dict[str, float] = {
     "stamp_duty_option_buy_pct": 0.00003,
     "gst_pct": 0.18,
     "default_slippage_per_point_inr": 0.10,
-    "ipft_per_crore_inr": 1.0,
+    "ipft_per_crore_inr": 0.01,
     "is_default": True,
 }
 
@@ -185,11 +185,11 @@ class FOCostCalculator:
         stamp_pct = float(s["stamp_duty_option_buy_pct"])
         stamp_duty = stamp_pct * buy_premium  # buy-side only
 
-        gst_base = brokerage + exchange_turnover_fee + sebi_turnover_charges
-        gst = float(s["gst_pct"]) * gst_base
-
-        ipft_pct = (float(s.get("ipft_per_crore_inr", 1.0)) or 0.0) / 10_000_000.0
+        ipft_pct = (float(s.get("ipft_per_crore_inr", 0.01)) or 0.0) / 10_000_000.0
         ipft = ipft_pct * total_premium_turnover
+
+        gst_base = brokerage + exchange_turnover_fee + sebi_turnover_charges + ipft
+        gst = float(s["gst_pct"]) * gst_base
 
         slip = float(slippage_per_point) if slippage_per_point is not None else float(s["default_slippage_per_point_inr"])
         slippage = slip * qty * 2  # entry + exit sides

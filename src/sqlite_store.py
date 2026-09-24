@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import numbers
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -30,6 +32,57 @@ _MODEL_MAP = {
     "charges_breakdown": ChargesBreakdown,
     "daily_summaries": DailySummary,
 }
+
+_SQLITE_INTEGER_COLUMNS = {
+    "win_count", "loss_count", "total_trades_executed", "total_strategy_runs",
+    "multiplier_x", "quantity", "lot_size", "strategy_run_id", "id",
+    "counter_int", "counter", "lots", "running_trade_count", "file_size_bytes",
+    "source_file_id", "expiry_weekday_number",
+}
+
+
+def sanitize_for_sqlite(record: dict) -> dict:
+    """Normalize pandas/numpy missing values before passing records to SQLite.
+
+    Missing auto-increment primary keys are left as ``None`` so SQLite can
+    allocate them. Other integer fields use zero for missing/invalid values;
+    non-finite floating point values use zero, while nullable non-numeric
+    values remain SQL NULL.
+    """
+    sanitized = {}
+    for key, value in record.items():
+        try:
+            missing_value = pd.isna(value)
+            is_missing = bool(missing_value) if pd.api.types.is_scalar(missing_value) else False
+        except (TypeError, ValueError):
+            is_missing = False
+
+        if key in _SQLITE_INTEGER_COLUMNS:
+            if key == "id" and is_missing:
+                sanitized[key] = None
+                continue
+            try:
+                value_number = float(value)
+                sanitized[key] = 0 if is_missing or not math.isfinite(value_number) else int(round(value_number))
+            except (ValueError, TypeError, OverflowError):
+                sanitized[key] = 0
+            continue
+
+        if is_missing:
+            if isinstance(value, numbers.Number) and not isinstance(value, bool):
+                sanitized[key] = 0.0
+            else:
+                sanitized[key] = None
+            continue
+
+        # Convert numpy scalar wrappers to their Python equivalents for SQLite.
+        if hasattr(value, "item") and callable(value.item):
+            try:
+                value = value.item()
+            except (ValueError, TypeError):
+                pass
+        sanitized[key] = value
+    return sanitized
 
 
 def _row_to_dict(row) -> dict:
@@ -106,6 +159,7 @@ class QuantDeskSqliteStore:
                 k: v for k, v in row_data.items()
                 if k in {c.name for c in model_cls.__table__.columns}
             }
+            clean = sanitize_for_sqlite(clean)
             # Convert date strings to date objects for Date columns
             for col in model_cls.__table__.columns:
                 if col.name in clean and clean[col.name] is not None:

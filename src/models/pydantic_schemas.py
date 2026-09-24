@@ -401,7 +401,7 @@ class BrokerChargeSchedule(_BaseRupeeModel):
     stamp_duty_option_buy_pct: float = 0.00003
     gst_pct: float = 0.18
     default_slippage_per_point_inr: float = 0.10
-    ipft_per_crore_inr: float = 1.0
+    ipft_per_crore_inr: float = 0.01
     is_default: bool = False
     notes: Optional[str] = None
 

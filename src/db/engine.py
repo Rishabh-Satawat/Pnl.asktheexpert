@@ -120,6 +120,12 @@ def seed_broker_charge_schedule(session: Session, effective: date = date(2026, 4
         BrokerChargeSchedule.broker_name == "ZERODHA"
     ).one_or_none()
     if existing is not None:
+        if existing.is_default and existing.ipft_per_crore_inr == 1.0:
+            existing.ipft_per_crore_inr = 0.01
+            existing.notes = (
+                "Zerodha charge schedule effective 2026-04-01. STT=0.15% on sell-side option premium; "
+                "NSE IPFT=₹0.01/crore. Realized Virtual Contract Note charges override estimates."
+            )
         if existing.stt_option_sell_premium_pct == 0.001:
             existing.stt_option_sell_premium_pct = 0.0015
             existing.notes = "Zerodha charge schedule effective 2026-04-01. STT=0.15% on sell-side option premium. Realized Virtual Contract Note charges override estimates."

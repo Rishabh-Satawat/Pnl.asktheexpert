@@ -266,6 +266,6 @@ class BrokerChargeSchedule(Base):
     stamp_duty_option_buy_pct = Column(Float, nullable=False, default=0.00003)
     gst_pct = Column(Float, nullable=False, default=0.18)
     default_slippage_per_point_inr = Column(Float, nullable=False, default=0.10)
-    ipft_per_crore_inr = Column(Float, nullable=True, default=1.0)
+    ipft_per_crore_inr = Column(Float, nullable=True, default=0.01)
     is_default = Column(Boolean, nullable=False, default=False)
     notes = Column(Text, nullable=True)

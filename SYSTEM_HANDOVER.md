@@ -413,3 +413,12 @@ python -m playwright install chromium --with-deps
 - Added regression coverage for the compatibility property, negative SELL quantity, and BANKNIFTY/SENSEX exchange correction.
 - Verification after this fix: `58 passed, 2 skipped` (PDF/Excel environment-dependent checks); `scripts/debug_manual_run.py` exited 0 with 4 executions, 2 matched trades, 0 open legs, ₹1,869 gross P&L, ₹124.83 charges, and ₹1,744.17 net P&L.
 - Fixture caveat: the four-execution fixture uses two SENSEX PE symbols, not a call-plus-put short strangle. It validates the reported matching/P&L vector, but not canonical strangle structure.
+
+## 10. PERSISTENCE SANITIZATION AND TRADE DOCTOR — 2026-09-24
+
+- Added `sanitize_for_sqlite()` in `src/sqlite_store.py`. It normalizes pandas/numpy missing values, rounds valid integer fields, supplies safe values for invalid integer inputs, preserves missing auto-increment IDs as `None`, and converts numpy scalars before SQLAlchemy receives them. The generic SQLite upsert and Stage 8's strategy, daily summary, charges, and execution inserts use it.
+- Added the first rule-based Trade Doctor view to the Analytics tab: closed-trade count, win rate, profit factor, expectancy, average winners/losers, cost drag, unmatched-leg count, strategy attribution, and review flags. It intentionally omits Greeks, benchmark slippage, and index-range correlation until the app has timestamp-aligned market/quote data and a documented Greeks source/model.
+- Corrected the default NSE IPFT assumption to ₹0.01 per crore and include that charge in the GST base, matching current Zerodha's published schedule. Existing database default schedules are migrated from the old ₹1/crore value by `init_db` without changing non-default schedules. Contract-note realized charges remain the reconciliation source of truth.
+- Automated tests were not run for this upgrade; run the full suite and a Streamlit manual-entry → Save to DB smoke test before relying on the release.
+- The current trading schema has no owner/account/tenant key. `init_db` seeds market reference data and a broker charge schedule, not a `Test Strat` trade. Do not delete that strategy until its source/date and linked executions/charges are inspected. Production multi-user isolation requires an authenticated owner/account ID carried through every trade, strategy, charge, query, and RLS policy.
+- The screenshots referenced in the latest request were not attached here; the persistence diagnosis is based on the supplied error text and the current code paths.

@@ -690,6 +690,7 @@ class DailyPipelineOrchestrator:
                 StrategyRun, DailySummary, ChargesBreakdown as CBModel,
                 TradeExecution,
             )
+            from .sqlite_store import sanitize_for_sqlite
 
             if isinstance(session_or_engine, Engine):
                 SessionLocal = sa_sessionmaker(
@@ -717,7 +718,8 @@ class DailyPipelineOrchestrator:
                 strat_runs_df = tables_dict.get("strategy_runs_df")
                 strategy_db_ids: Dict[Any, int] = {}
                 if strat_runs_df is not None and not strat_runs_df.empty:
-                    for _, row in strat_runs_df.iterrows():
+                    for _, source_row in strat_runs_df.iterrows():
+                        row = sanitize_for_sqlite(source_row.to_dict())
                         run_key = row.get("strategy_run_id", 0)
                         run_uuid = row.get("strategy_run_uuid") or str(
                             uuid.uuid5(uuid.NAMESPACE_URL, f"pnl:{report_date}:{run_key}")
@@ -730,8 +732,8 @@ class DailyPipelineOrchestrator:
                         sr.report_date = report_date
                         sr.strategy_name = str(row.get("strategy_name", "unknown"))
                         sr.deployment_status = str(row.get("deployment_status", "EXITED"))
-                        sr.multiplier_x = int(row.get("multiplier_x", row.get("multiplier", 1)))
-                        sr.counter_int = int(row.get("counter", 0)) if pd.notna(row.get("counter")) else None
+                        sr.multiplier_x = int(row.get("multiplier_x") or row.get("multiplier") or 1)
+                        sr.counter_int = row.get("counter")
                         sr.capital_deployed_allocated = float(row.get("capital_deployed_allocated", 0) or 0)
                         sr.booked_gross_pnl = float(row.get("booked_gross_pnl", 0) or 0)
                         sr.allocated_charges_total = float(row.get("allocated_charges_total", 0) or 0)
@@ -743,7 +745,8 @@ class DailyPipelineOrchestrator:
                     row_counts["strategy_runs"] = len(strat_runs_df)
 
                 # Daily summary
-                summary_dict = tables_dict.get("daily_summary_dict")
+                source_summary = tables_dict.get("daily_summary_dict")
+                summary_dict = sanitize_for_sqlite(source_summary) if source_summary is not None else None
                 if summary_dict is not None:
                     ds = sess.get(DailySummary, report_date) or DailySummary(report_date=report_date)
                     ds.total_trades_executed = int(summary_dict.get("total_trades_executed", 0))
@@ -769,7 +772,8 @@ class DailyPipelineOrchestrator:
                             CBModel.report_date == report_date,
                             CBModel.strategy_run_id.in_(target_run_ids),
                         ).delete(synchronize_session=False)
-                    for _, row in charges_df.iterrows():
+                    for _, source_row in charges_df.iterrows():
+                        row = sanitize_for_sqlite(source_row.to_dict())
                         run_key = row.get("strategy_run_id")
                         db_run_id = strategy_db_ids.get(run_key)
                         if db_run_id is None:
@@ -796,7 +800,8 @@ class DailyPipelineOrchestrator:
                 # Persist raw executions as well as their matched round trips.
                 executions_df = tables_dict.get("trade_executions_df")
                 if executions_df is not None and not executions_df.empty:
-                    for _, row in executions_df.iterrows():
+                    for _, source_row in executions_df.iterrows():
+                        row = sanitize_for_sqlite(source_row.to_dict())
                         run_key = row.get("strategy_run_id", 0)
                         db_run_id = strategy_db_ids.get(run_key)
                         if db_run_id is None:

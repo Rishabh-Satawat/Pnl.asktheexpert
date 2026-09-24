@@ -505,7 +505,7 @@ def render_daily_processing() -> None:
             _render_strategy_tab(strategy_runs_df)
 
         with tab_analytics:
-            _render_analytics_tab(strategy_runs_df)
+            _render_analytics_tab(strategy_runs_df, pipeline_result)
 
         with tab_trades:
             _render_trades_tab(pipeline_result)
@@ -1124,9 +1124,49 @@ def _render_strategy_tab(strategy_runs_df) -> None:
         )
 
 
-def _render_analytics_tab(strategy_runs_df) -> None:
-    if strategy_runs_df is None or strategy_runs_df.empty:
+def _render_analytics_tab(strategy_runs_df, pipeline_result=None) -> None:
+    if (strategy_runs_df is None or strategy_runs_df.empty) and pipeline_result is None:
         st.caption("No analytics data available.")
+        return
+
+    st.markdown("### Trade Doctor")
+    st.caption("Rule-based diagnostics from recorded trades and charges; not a forecast or investment recommendation.")
+    try:
+        from src.trade_doctor import diagnose_pipeline
+        diagnosis = diagnose_pipeline(pipeline_result) if pipeline_result is not None else None
+        if diagnosis:
+            metrics = diagnosis["metrics"]
+            doctor_cols = st.columns(5)
+            doctor_cols[0].metric("Closed trades", metrics["closed_trades"])
+            doctor_cols[1].metric("Win rate", f"{metrics['win_rate_pct']:.1f}%" if metrics["win_rate_pct"] is not None else "—")
+            factor = metrics["profit_factor"]
+            doctor_cols[2].metric("Profit factor", "∞" if factor == float("inf") else f"{factor:.2f}" if factor is not None else "—")
+            doctor_cols[3].metric("Expectancy / trade", f"₹{metrics['expectancy_per_trade']:,.2f}" if metrics["expectancy_per_trade"] is not None else "—")
+            doctor_cols[4].metric("Cost drag", f"{metrics['cost_drag_pct']:.1f}%" if metrics["cost_drag_pct"] is not None else "—")
+            detail_cols = st.columns(3)
+            detail_cols[0].metric("Average winning trade", f"₹{metrics['average_win']:,.2f}" if metrics["average_win"] is not None else "—")
+            detail_cols[1].metric("Average losing trade", f"₹{metrics['average_loss']:,.2f}" if metrics["average_loss"] is not None else "—")
+            detail_cols[2].metric("Unmatched legs", metrics["unmatched_legs"])
+
+            for finding in diagnosis["findings"]:
+                message = f"**{finding['title']}** — {finding['detail']}"
+                if finding["level"] == "Alert":
+                    st.error(message)
+                elif finding["level"] == "Review":
+                    st.warning(message)
+                else:
+                    st.info(message)
+
+            attribution = diagnosis["strategy_attribution"]
+            if attribution is not None and not attribution.empty:
+                st.markdown("#### Strategy attribution")
+                st.dataframe(attribution, width="stretch", hide_index=True)
+            st.caption("Greeks, benchmark slippage, and index-range correlation are not shown because the current records do not include the required quote, market, or model inputs.")
+    except Exception as doctor_exc:
+        st.caption(f"Trade diagnostics unavailable: {doctor_exc}")
+
+    if strategy_runs_df is None or strategy_runs_df.empty:
+        st.caption("No strategy attribution or segment charts are available for this run.")
         return
 
     try:
