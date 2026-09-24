@@ -16,7 +16,7 @@ from src.pnl_pipeline import DailyPipelineOrchestrator, StageResult, PipelineRes
 from src.db.engine import init_db
 from src.db.schema import (
     Base, DailySummary, EquityCurve, StrategyRun,
-    ChargesBreakdown as CBModel,
+    ChargesBreakdown as CBModel, TradeExecution,
 )
 
 
@@ -393,8 +393,8 @@ def test_tr_9_3_stage_result_observability():
 # TR-9.4: Rollback on SQL error
 # -----------------------------------------------------------------------
 
-def test_tr_9_4_rollback_on_sql_error():
-    """Attempt to persist a duplicate PK row, verify ROLLBACK leaves tables empty."""
+def test_tr_9_4_same_date_persist_updates_without_duplicate_pk():
+    """Saving a second run for one report date updates its daily summary safely."""
     tmpdir = tempfile.mkdtemp()
     try:
         db_path = Path(tmpdir) / "test_rollback.db"
@@ -422,8 +422,7 @@ def test_tr_9_4_rollback_on_sql_error():
         finally:
             sess.close()
 
-        # Now try to persist another DailySummary with same PK (report_date)
-        # plus some StrategyRun rows in the same transaction
+        # Persist another result for the same date; it must upsert the summary.
         tables = {
             "strategy_runs_df": pd.DataFrame([{
                 "strategy_name": "Test Strat",
@@ -447,25 +446,33 @@ def test_tr_9_4_rollback_on_sql_error():
                 "total_net_pnl": 450.0,
                 "portfolio_day_roi_pct": 0.45,
             },
+            "trade_executions_df": pd.DataFrame([{
+                "strategy_run_id": 0, "vendor_symbol": "SENSEX2692277300PE",
+                "trade_date": report_dt, "execution_time": "09:30:00",
+                "side": "SELL", "quantity": 20, "price": 51.0,
+                "segment": "SENSEX", "exchange": "BSE", "lot_size_lookup": 20,
+            }]),
         }
 
         s8 = orch.stage_8_persist_sqlite(SessionLocal, tables, report_dt)
-        assert s8.status == "FAIL", (
-            f"Expected stage 8 to FAIL due to duplicate PK, got {s8.status}"
+        assert s8.status in ("SUCCESS", "WARNING"), (
+            f"Expected stage 8 to upsert the date, got {s8.status}: {s8.errors}"
         )
-        assert len(s8.errors) > 0, "Expected error messages in StageResult"
+        second_save = orch.stage_8_persist_sqlite(SessionLocal, tables, report_dt)
+        assert second_save.status in ("SUCCESS", "WARNING"), second_save.errors
 
-        # Verify rollback: no new StrategyRun rows should exist
+        # Repeating the same save must be idempotent and retain the raw leg.
         sess = SessionLocal()
         try:
             strat_count = sess.query(StrategyRun).count()
-            assert strat_count == 0, (
-                f"Expected 0 strategy_runs after rollback, got {strat_count}"
-            )
+            assert strat_count == 1, f"Expected the strategy run to persist, got {strat_count}"
+            assert sess.query(TradeExecution).filter_by(report_date=report_dt).count() == 1
+            saved_summary = sess.query(DailySummary).filter_by(report_date=report_dt).one()
+            assert saved_summary.total_net_pnl == pytest.approx(450.0)
         finally:
             sess.close()
 
-        print("[TR-9.4] PASS: Rollback on SQL error verified")
+        print("[TR-9.4] PASS: Same-date upsert and execution persistence verified")
     finally:
         engine.dispose()
         import shutil

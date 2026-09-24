@@ -36,6 +36,7 @@ class TradeMatcher:
         # Canonical column renames (keep existing names if already correct)
         rename_map: Dict[str, str] = {
             "symbol": "vendor_symbol",
+            "report_date": "trade_date",
             "instrument_symbol": "vendor_symbol",
             "Instrument": "vendor_symbol",
             "instrument": "vendor_symbol",

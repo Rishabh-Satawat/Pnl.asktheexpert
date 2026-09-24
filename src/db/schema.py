@@ -259,7 +259,7 @@ class BrokerChargeSchedule(Base):
     broker_name = Column(String(40), nullable=False, unique=True)
     effective_date = Column(Date, nullable=False)
     brokerage_per_order_inr = Column(Float, nullable=False, default=20.0)
-    stt_option_sell_premium_pct = Column(Float, nullable=False, default=0.001)
+    stt_option_sell_premium_pct = Column(Float, nullable=False, default=0.0015)
     nse_exchange_option_pct = Column(Float, nullable=False, default=0.0003553)
     bse_exchange_option_pct = Column(Float, nullable=False, default=0.000325)
     sebi_fee_per_crore_inr = Column(Float, nullable=False, default=10.0)

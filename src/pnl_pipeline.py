@@ -35,6 +35,8 @@ class PipelineResult:
     strategy_runs_df: Any = None
     charges_df: Any = None
     equity_curve_append_df: Any = None
+    matched_trades_df: Any = None
+    trade_executions_df: Any = None
     report_ready: bool = False
 
 
@@ -180,6 +182,7 @@ class DailyPipelineOrchestrator:
         try:
             strategy_cards: List[Dict[str, Any]] = []
             kite_positions: List[Dict[str, Any]] = []
+            manual_trade_rows: List[Dict[str, Any]] = []
             contract_note_charges: Optional[Dict[str, float]] = None
             warnings_list: List[str] = []
 
@@ -195,7 +198,7 @@ class DailyPipelineOrchestrator:
                 if src_type == "MANUAL_CSV":
                     csv_df = row.get("manual_csv_df")
                     if csv_df is not None:
-                        strategy_cards.extend(csv_df.to_dict("records"))
+                        manual_trade_rows.extend(csv_df.to_dict("records"))
                     continue
                 if src_type == "CONTRACT_NOTE_OVERRIDE":
                     contract_note_charges = row.get("contract_note_charges")
@@ -243,6 +246,7 @@ class DailyPipelineOrchestrator:
                 dataframes={
                     "strategy_cards_df": strategy_cards_df,
                     "kite_positions_df": kite_positions_df,
+                    "trade_executions_df": pd.DataFrame(manual_trade_rows),
                     "contract_note_charges": contract_note_charges,
                 },
             )
@@ -278,16 +282,11 @@ class DailyPipelineOrchestrator:
                     ],
                 )
 
-            # Merge operator edits with parsed data
+            # Operator-edited execution rows belong in the execution stream,
+            # never in strategy metadata.
             dfs = dict(parse_result.dataframes)
             if operator_edits_df is not None and not operator_edits_df.empty:
-                strategy_cards_df = dfs.get("strategy_cards_df", pd.DataFrame())
-                if not strategy_cards_df.empty:
-                    # Overlay edits by index or strategy_run_id
-                    for col in operator_edits_df.columns:
-                        if col in strategy_cards_df.columns:
-                            strategy_cards_df[col] = operator_edits_df[col]
-                    dfs["strategy_cards_df"] = strategy_cards_df
+                dfs["trade_executions_df"] = operator_edits_df.copy()
 
             elapsed = (time.perf_counter() - t0) * 1000.0
             return StageResult(
@@ -566,6 +565,10 @@ class DailyPipelineOrchestrator:
 
             # Merge charges into strategies_df
             strat = strategies_df.copy()
+            if "multiplier" not in strat.columns and "multiplier_x" in strat.columns:
+                strat["multiplier"] = strat["multiplier_x"]
+            if "counter" not in strat.columns and "counter_int" in strat.columns:
+                strat["counter"] = strat["counter_int"]
             if not charges_df.empty and "strategy_run_id" in charges_df.columns and "total_charges" in charges_df.columns:
                 charges_agg = (
                     charges_df.groupby("strategy_run_id", as_index=False)["total_charges"]
@@ -621,30 +624,42 @@ class DailyPipelineOrchestrator:
             from .supabase_store import get_supabase_store
             sb = get_supabase_store()
             if sb.is_connected:
+                if tables_dict.get("replace_report") and not sb.delete_daily_batch(report_date):
+                    warns.append("Supabase replace failed; cloud write was skipped for safety.")
+                    sb = None
+            if sb is not None and sb.is_connected:
                 strategy_runs_df = tables_dict.get("strategy_runs_df")
                 daily_summary_dict = tables_dict.get("daily_summary_dict")
                 charges_df = tables_dict.get("charges_df")
+                run_records = strategy_runs_df.to_dict("records") if strategy_runs_df is not None and not strategy_runs_df.empty else []
+                run_uuid_by_id = {}
+                for record in run_records:
+                    record["strategy_run_uuid"] = str(record.get("strategy_run_uuid") or uuid.uuid5(
+                        uuid.NAMESPACE_URL, f"pnl:{report_date}:{record.get('strategy_run_id', 0)}"
+                    ))
+                    run_uuid_by_id[record.get("strategy_run_id")] = record["strategy_run_uuid"]
+                charge_records = charges_df.to_dict("records") if charges_df is not None and not charges_df.empty else []
+                for charge in charge_records:
+                    charge["strategy_run_uuid"] = charge.get("strategy_run_uuid") or run_uuid_by_id.get(charge.get("strategy_run_id"))
+                execution_df = tables_dict.get("trade_executions_df")
+                execution_records = execution_df.to_dict("records") if execution_df is not None and not execution_df.empty else []
+                for execution in execution_records:
+                    run_id = execution.get("strategy_run_id")
+                    execution["strategy_run_uuid"] = execution.get("strategy_run_uuid") or run_uuid_by_id.get(run_id)
+                    execution["execution_uuid"] = execution.get("execution_uuid") or str(uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"pnl-execution:{report_date}:{run_id}:{execution.get('vendor_symbol')}:{execution.get('execution_timestamp')}:{execution.get('side')}:{execution.get('quantity')}:{execution.get('price', execution.get('execution_price'))}"
+                    ))
+                    execution["execution_price"] = execution.get("execution_price", execution.get("price", 0))
 
                 supabase_result = sb.upsert_daily_batch(
                     report_date=report_date,
                     daily_summary=daily_summary_dict if isinstance(daily_summary_dict, dict) else None,
-                    strategy_runs=(
-                        strategy_runs_df.to_dict("records")
-                        if strategy_runs_df is not None and not strategy_runs_df.empty
-                        else None
-                    ),
-                    charges=(
-                        charges_df.to_dict("records")
-                        if charges_df is not None and not charges_df.empty
-                        else None
-                    ),
-                    trade_executions=(
-                        tables_dict.get("matched_trades_df", pd.DataFrame()).to_dict("records")
-                        if tables_dict.get("matched_trades_df") is not None and not tables_dict.get("matched_trades_df", pd.DataFrame()).empty
-                        else None
-                    ),
+                    strategy_runs=run_records or None,
+                    charges=charge_records or None,
+                    trade_executions=execution_records or None,
                 )
-            else:
+            elif sb is not None and not sb.is_connected:
                 warns.append(
                     "Supabase not configured — set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY "
                     "for cloud persistence. Continuing with SQLite-only."
@@ -682,51 +697,84 @@ class DailyPipelineOrchestrator:
             row_counts: Dict[str, int] = {}
             sess = SessionLocal()
             try:
+                if tables_dict.get("replace_report"):
+                    from .db.schema import StrategyRun as StrategyRunModel
+                    prior_runs = sess.query(StrategyRunModel).filter_by(report_date=report_date).all()
+                    prior_ids = [run.id for run in prior_runs]
+                    if prior_ids:
+                        sess.query(CBModel).filter(CBModel.strategy_run_id.in_(prior_ids)).delete(synchronize_session=False)
+                        sess.query(TradeExecution).filter(TradeExecution.strategy_run_id.in_(prior_ids)).delete(synchronize_session=False)
+                        sess.query(StrategyRunModel).filter(StrategyRunModel.id.in_(prior_ids)).delete(synchronize_session=False)
+                    prior_summary = sess.get(DailySummary, report_date)
+                    if prior_summary is not None:
+                        sess.delete(prior_summary)
                 # Strategy runs
                 strat_runs_df = tables_dict.get("strategy_runs_df")
+                strategy_db_ids: Dict[Any, int] = {}
                 if strat_runs_df is not None and not strat_runs_df.empty:
                     for _, row in strat_runs_df.iterrows():
-                        sr = StrategyRun(
-                            strategy_run_uuid=str(uuid.uuid4()),
-                            report_date=report_date,
-                            strategy_name=str(row.get("strategy_name", "unknown")),
-                            deployment_status=str(row.get("deployment_status", "EXITED")),
-                            multiplier_x=int(row.get("multiplier", 1)),
-                            counter_int=int(row.get("counter", 0)) if pd.notna(row.get("counter")) else None,
-                            capital_deployed_allocated=float(row.get("capital_deployed_allocated", 0)),
-                            booked_gross_pnl=float(row.get("booked_gross_pnl", 0)),
-                            allocated_charges_total=float(row.get("allocated_charges_total", 0)),
-                            net_pnl=float(row.get("net_pnl", 0)),
-                            net_roi_pct=float(row.get("net_roi_pct", 0)) if pd.notna(row.get("net_roi_pct")) else None,
-                            underlying_segment=str(row.get("underlying_segment", "")) if pd.notna(row.get("underlying_segment")) else None,
+                        run_key = row.get("strategy_run_id", 0)
+                        run_uuid = row.get("strategy_run_uuid") or str(
+                            uuid.uuid5(uuid.NAMESPACE_URL, f"pnl:{report_date}:{run_key}")
                         )
-                        sess.add(sr)
+                        sr = sess.query(StrategyRun).filter_by(strategy_run_uuid=run_uuid).one_or_none()
+                        if sr is None:
+                            sr = StrategyRun(strategy_run_uuid=run_uuid, report_date=report_date,
+                                             strategy_name=str(row.get("strategy_name", "unknown")))
+                            sess.add(sr)
+                        sr.report_date = report_date
+                        sr.strategy_name = str(row.get("strategy_name", "unknown"))
+                        sr.deployment_status = str(row.get("deployment_status", "EXITED"))
+                        sr.multiplier_x = int(row.get("multiplier_x", row.get("multiplier", 1)))
+                        sr.counter_int = int(row.get("counter", 0)) if pd.notna(row.get("counter")) else None
+                        sr.capital_deployed_allocated = float(row.get("capital_deployed_allocated", 0) or 0)
+                        sr.booked_gross_pnl = float(row.get("booked_gross_pnl", 0) or 0)
+                        sr.allocated_charges_total = float(row.get("allocated_charges_total", 0) or 0)
+                        sr.net_pnl = float(row.get("net_pnl", 0) or 0)
+                        sr.net_roi_pct = float(row.get("net_roi_pct")) if pd.notna(row.get("net_roi_pct")) else None
+                        sr.underlying_segment = str(row.get("underlying_segment", "")) if pd.notna(row.get("underlying_segment")) else None
+                        sess.flush()
+                        strategy_db_ids[run_key] = sr.id
                     row_counts["strategy_runs"] = len(strat_runs_df)
 
                 # Daily summary
                 summary_dict = tables_dict.get("daily_summary_dict")
                 if summary_dict is not None:
-                    ds = DailySummary(
-                        report_date=report_date,
-                        total_trades_executed=int(summary_dict.get("total_trades_executed", 0)),
-                        total_strategy_runs=int(summary_dict.get("total_strategy_runs", 0)),
-                        win_count=int(summary_dict.get("win_count", 0)),
-                        loss_count=int(summary_dict.get("loss_count", 0)),
-                        total_capital_deployed_peak=float(summary_dict.get("peak_capital_deployed", 0)),
-                        total_gross_pnl=float(summary_dict.get("total_gross_pnl", 0)),
-                        total_transaction_cost_drag=float(summary_dict.get("total_allocated_charges", 0)),
-                        total_net_pnl=float(summary_dict.get("total_net_pnl", 0)),
-                        portfolio_day_net_roi_pct=float(summary_dict.get("portfolio_day_roi_pct", 0)) if not pd.isna(summary_dict.get("portfolio_day_roi_pct", 0)) else None,
-                    )
+                    ds = sess.get(DailySummary, report_date) or DailySummary(report_date=report_date)
+                    ds.total_trades_executed = int(summary_dict.get("total_trades_executed", 0))
+                    ds.total_strategy_runs = int(summary_dict.get("total_strategy_runs", len(strat_runs_df) if strat_runs_df is not None else 0))
+                    ds.win_count = int(summary_dict.get("win_count", 0))
+                    ds.loss_count = int(summary_dict.get("loss_count", 0))
+                    ds.total_capital_deployed_peak = float(summary_dict.get("peak_capital_deployed", summary_dict.get("total_capital_deployed_peak", 0)) or 0)
+                    ds.total_gross_pnl = float(summary_dict.get("total_gross_pnl", 0) or 0)
+                    ds.total_transaction_cost_drag = float(summary_dict.get("total_allocated_charges", summary_dict.get("total_transaction_cost_drag", 0)) or 0)
+                    ds.total_net_pnl = float(summary_dict.get("total_net_pnl", 0) or 0)
+                    roi = summary_dict.get("portfolio_day_roi_pct", summary_dict.get("portfolio_day_net_roi_pct"))
+                    ds.portfolio_day_net_roi_pct = float(roi) if roi is not None and not pd.isna(roi) else None
                     sess.add(ds)
                     row_counts["daily_summaries"] = 1
 
                 # Charges
                 charges_df = tables_dict.get("charges_df")
                 if charges_df is not None and not charges_df.empty:
+                    target_run_ids = [strategy_db_ids.get(k) for k in charges_df.get("strategy_run_id", [])]
+                    target_run_ids = [value for value in target_run_ids if value is not None]
+                    if target_run_ids:
+                        sess.query(CBModel).filter(
+                            CBModel.report_date == report_date,
+                            CBModel.strategy_run_id.in_(target_run_ids),
+                        ).delete(synchronize_session=False)
                     for _, row in charges_df.iterrows():
+                        run_key = row.get("strategy_run_id")
+                        db_run_id = strategy_db_ids.get(run_key)
+                        if db_run_id is None:
+                            # Keep the charge attached to an existing run when rebuilding the same date.
+                            existing_run = sess.query(StrategyRun).filter_by(report_date=report_date).first()
+                            db_run_id = existing_run.id if existing_run else None
+                        if db_run_id is None:
+                            continue
                         cb = CBModel(
-                            strategy_run_id=int(row.get("strategy_run_id", 0)),
+                            strategy_run_id=db_run_id,
                             report_date=report_date,
                             charge_source=str(row.get("charge_source", "FORMULA_COMPUTED")),
                             brokerage=float(row.get("brokerage", 0)),
@@ -739,6 +787,40 @@ class DailyPipelineOrchestrator:
                         )
                         sess.add(cb)
                     row_counts["charges_breakdown"] = len(charges_df)
+
+                # Persist raw executions as well as their matched round trips.
+                executions_df = tables_dict.get("trade_executions_df")
+                if executions_df is not None and not executions_df.empty:
+                    for _, row in executions_df.iterrows():
+                        run_key = row.get("strategy_run_id", 0)
+                        db_run_id = strategy_db_ids.get(run_key)
+                        if db_run_id is None:
+                            continue
+                        identity = "|".join(str(row.get(col, "")) for col in (
+                            "vendor_symbol", "execution_timestamp", "trade_date", "side", "quantity", "price"
+                        ))
+                        execution_uuid = str(row.get("execution_uuid") or uuid.uuid5(
+                            uuid.NAMESPACE_URL, f"pnl-execution:{report_date}:{run_key}:{identity}"
+                        ))
+                        if sess.query(TradeExecution).filter_by(execution_uuid=execution_uuid).first():
+                            continue
+                        qty = int(row.get("quantity", 0) or 0)
+                        price = float(row.get("execution_price", row.get("price", 0)) or 0)
+                        sess.add(TradeExecution(
+                            execution_uuid=execution_uuid,
+                            strategy_run_id=db_run_id,
+                            report_date=report_date,
+                            vendor_symbol=str(row.get("vendor_symbol", row.get("symbol", ""))),
+                            underlying=row.get("underlying"), segment=row.get("segment"),
+                            exchange=row.get("exchange"), option_type=row.get("option_type"),
+                            side=str(row.get("side", "")).upper(),
+                            lots=int(row.get("lots", 1) or 1),
+                            lot_size=int(row.get("lot_size", row.get("lot_size_lookup", 0)) or 0) if pd.notna(row.get("lot_size", row.get("lot_size_lookup", 0))) else 0,
+                            quantity=qty, execution_price=price,
+                            execution_timestamp_ist=row.get("execution_timestamp"),
+                            manually_edited=True,
+                        ))
+                    row_counts["trade_executions"] = len(executions_df)
 
                 sess.commit()
             except Exception as db_err:
@@ -1015,6 +1097,8 @@ class DailyPipelineOrchestrator:
         result.strategy_runs_df = s7.dataframes.get("strategy_runs_df")
         result.charges_df = charges_df
         result.daily_summary_df = s7.dataframes.get("daily_summary_dict")
+        result.matched_trades_df = matched_df
+        result.trade_executions_df = trade_exec_df
 
         # Stage 8
         engine = self.db_engine
@@ -1023,6 +1107,7 @@ class DailyPipelineOrchestrator:
             "strategy_runs_df": result.strategy_runs_df,
             "daily_summary_dict": result.daily_summary_df,
             "charges_df": result.charges_df,
+            "trade_executions_df": trade_exec_df,
         }
         s8 = self.stage_8_persist_sqlite(
             session_factory or engine, tables, report_date,

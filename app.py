@@ -19,11 +19,16 @@ except ImportError:  # pragma: no cover
 
 # Install Playwright Chromium on first run (needed on Streamlit Cloud / fresh servers)
 _chromium_flag = os.path.join(os.path.dirname(__file__), ".playwright_installed")
-if not os.path.exists(_chromium_flag):
+if not os.path.exists(_chromium_flag) and not st.session_state.get("_playwright_install_attempted"):
+    st.session_state["_playwright_install_attempted"] = True
     try:
-        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
-                       check=False, capture_output=True)
-        open(_chromium_flag, "w").close()
+        install_result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=False, capture_output=True, text=True,
+        )
+        if install_result.returncode == 0:
+            with open(_chromium_flag, "w", encoding="utf-8"):
+                pass
     except Exception:
         pass  # Non-blocking — PDF will show error if truly missing
 

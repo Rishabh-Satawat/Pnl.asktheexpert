@@ -26,6 +26,12 @@ def render_daily_processing() -> None:
     # ── Date Picker ───────────────────────────────────────────────
     report_date = st.date_input("Trading Date", value=date.today())
     st.session_state["report_date"] = report_date
+    st.selectbox(
+        "When this date already has saved trades",
+        ["Append new strategies", "Replace saved report for this date"],
+        key="daily_write_mode",
+        help="Append is the default and preserves the earlier strategies and totals.",
+    )
 
     # ── Mode Toggle ───────────────────────────────────────────────
     st.divider()
@@ -191,6 +197,52 @@ def render_daily_processing() -> None:
         )
         st.session_state["manual_entry_legs"] = edited_legs
 
+        # Additional strategy blocks let a trader process a whole day together.
+        st.session_state.setdefault("manual_additional_strategy_count", 0)
+        if st.button("Add another strategy for this date", key="btn_additional_strategy"):
+            st.session_state["manual_additional_strategy_count"] += 1
+            st.rerun()
+        if st.session_state["manual_additional_strategy_count"] > 0 and st.button("Remove the last added strategy", key="btn_remove_additional_strategy"):
+            st.session_state["manual_additional_strategy_count"] -= 1
+            st.rerun()
+        additional_cards = []
+        additional_frames = []
+        for extra_index in range(st.session_state["manual_additional_strategy_count"]):
+            extra_key = f"manual_additional_{extra_index}"
+            with st.expander(f"Additional strategy {extra_index + 1}", expanded=True):
+                extra_name = st.text_input("Strategy name", value=f"Strategy {extra_index + 2}", key=f"{extra_key}_name")
+                extra_cols = st.columns(4)
+                with extra_cols[0]:
+                    extra_capital = st.number_input("Capital deployed (INR)", min_value=0.0, value=300000.0, step=10000.0, key=f"{extra_key}_capital")
+                with extra_cols[1]:
+                    extra_multiplier = st.selectbox("Multiplier", [1, 2, 3, 4, 5], key=f"{extra_key}_multiplier")
+                with extra_cols[2]:
+                    extra_status = st.selectbox("Status", ["Exited", "LIVE AUTO", "Paused"], key=f"{extra_key}_status")
+                with extra_cols[3]:
+                    extra_broker = st.selectbox("Broker", ["Zerodha", "Dhan", "Upstox"], key=f"{extra_key}_broker")
+                extra_segment = st.selectbox("Underlying", ["SENSEX", "BANKNIFTY", "NIFTY", "FINNIFTY", "MIDCPNIFTY"], key=f"{extra_key}_segment")
+                extra_exchange = "BSE" if extra_segment == "SENSEX" else "NSE"
+                extra_lot_size = _LOT_MAP.get(extra_segment, 20)
+                extra_date_tag = report_date.strftime("%d%b%Y").upper()
+                extra_quantity = extra_lot_size * extra_multiplier
+                extra_editor_key = f"{extra_key}_legs_{report_date}"
+                extra_defaults = pd.DataFrame([
+                    {"vendor_symbol": f"OPTIDX_{extra_segment}_{extra_date_tag}_{option}_00000", "trade_date": str(report_date), "execution_time": tm, "condition": cond, "side": side, "quantity": extra_quantity, "price": 0.0, "amount": 0.0, "exchange": extra_exchange, "segment": extra_segment}
+                    for option in ("PE", "CE")
+                    for tm, cond, side in (("09:30:00", "Entry", "SELL"), ("15:20:00", "Universal Exit", "BUY"))
+                ])
+                extra_legs = st.data_editor(extra_defaults, use_container_width=True, num_rows="dynamic", key=extra_editor_key)
+                extra_run_id = extra_index + 2
+                extra_legs = extra_legs.copy()
+                extra_legs["strategy_run_id"] = extra_run_id
+                extra_legs["strategy_name"] = extra_name
+                extra_legs["capital_deployed_allocated"] = extra_capital
+                extra_legs["multiplier_x"] = extra_multiplier
+                extra_legs["deployment_status"] = extra_status
+                extra_legs["broker"] = extra_broker
+                additional_frames.append(extra_legs)
+                additional_cards.append({"strategy_run_id": extra_run_id, "strategy_name": extra_name, "capital_deployed_allocated": extra_capital, "multiplier_x": extra_multiplier, "deployment_status": extra_status, "broker": extra_broker})
+
         # Optional: Contract Note Charges
         with st.expander("📄 Contract Note Charges (optional — leave blank for FORMULA mode)"):
             st.caption("If you have exact charges from your broker contract note, enter them here (REALIZED mode). Otherwise leave blank and the Zerodha formula will be used.")
@@ -227,8 +279,17 @@ def render_daily_processing() -> None:
         # Load into Staging button
         if st.button("✅ Load into Staging", type="primary", key="btn_load_manual"):
             if edited_legs is not None and len(edited_legs) > 0:
-                st.session_state["staging_data"] = edited_legs.copy()
+                primary_legs = edited_legs.copy()
+                primary_legs["strategy_run_id"] = 1
+                primary_legs["strategy_name"] = sc_name
+                primary_legs["capital_deployed_allocated"] = sc_capital
+                primary_legs["multiplier_x"] = sc_multiplier
+                primary_legs["deployment_status"] = sc_status
+                primary_legs["broker"] = sc_broker
+                all_strategy_frames = [primary_legs] + additional_frames
+                st.session_state["staging_data"] = pd.concat(all_strategy_frames, ignore_index=True)
                 strategy_card = {
+                    "strategy_run_id": 1,
                     "strategy_name": sc_name,
                     "capital_deployed_allocated": sc_capital,
                     "multiplier_x": sc_multiplier,
@@ -237,7 +298,7 @@ def render_daily_processing() -> None:
                     "booked_gross_pnl": 0.0,
                     "card_roi_pct": 0.0,
                 }
-                st.session_state["strategy_cards_extracted"] = [strategy_card]
+                st.session_state["strategy_cards_extracted"] = [strategy_card] + additional_cards
                 st.session_state["gemini_result"] = {}
                 st.success(
                     f"✅ {len(edited_legs)} execution rows loaded into staging. "
@@ -427,7 +488,7 @@ def render_daily_processing() -> None:
 
     # ── Results Tabs ──────────────────────────────────────────────
     pipeline_result = st.session_state.get("pipeline_result")
-    if pipeline_result is not None:
+    if st.session_state.get("pipeline_executed") and pipeline_result is not None:
         st.subheader("4. Results")
         tab_summary, tab_strategy, tab_analytics, tab_trades, tab_recon = st.tabs(
             ["Summary", "Strategy Cards", "Analytics", "Trade Log", "Reconciliation"]
@@ -466,14 +527,12 @@ def render_daily_processing() -> None:
             try:
                 from src.report_engine import DailyReportGenerator
                 pr = st.session_state["pipeline_result"]
-                gen = DailyReportGenerator(
-                    report_date=st.session_state.get("report_date", date.today()),
-                    strategy_runs_df=pr.strategy_runs_df,
-                    daily_summary_dict=pr.daily_summary_df,
-                    charges_df=pr.charges_df,
-                    matched_trades_df=getattr(pr, "matched_trades_df", None),
-                )
-                pdf_bytes = gen.render_daily_pdf() if hasattr(gen, "render_daily_pdf") else None
+                html_str = _build_report_html(pr, st.session_state.get("report_date", date.today()))
+                pdf_cache_key = f"{st.session_state.get('report_date', date.today())}:{id(pr)}"
+                pdf_cache = st.session_state.setdefault("_report_pdf_cache", {})
+                if pdf_cache_key not in pdf_cache:
+                    pdf_cache[pdf_cache_key] = _build_report_pdf(html_str)
+                pdf_bytes, pdf_error = pdf_cache[pdf_cache_key]
                 if pdf_bytes:
                     st.download_button("📄 Download PDF", data=pdf_bytes,
                         file_name=f"Quant_Report_{st.session_state.get('report_date', date.today()).isoformat()}.pdf",
@@ -523,14 +582,7 @@ def render_daily_processing() -> None:
             try:
                 from src.report_engine import DailyReportGenerator
                 pr = st.session_state["pipeline_result"]
-                gen = DailyReportGenerator(
-                    report_date=st.session_state.get("report_date", date.today()),
-                    strategy_runs_df=pr.strategy_runs_df,
-                    daily_summary_dict=pr.daily_summary_df,
-                    charges_df=pr.charges_df,
-                    matched_trades_df=getattr(pr, "matched_trades_df", None),
-                )
-                html_str = gen.render_daily_html()
+                html_str = _build_report_html(pr, st.session_state.get("report_date", date.today()))
                 st.download_button("🌐 Download HTML", data=html_str,
                     file_name=f"Quant_Report_{st.session_state.get('report_date', date.today()).isoformat()}.html",
                     mime="text/html", key="btn_html")
@@ -543,6 +595,41 @@ def render_daily_processing() -> None:
 # ---------------------------------------------------------------------------
 # DB save helper
 # ---------------------------------------------------------------------------
+
+def _build_report_html(pipeline_result, report_date) -> str:
+    from src.report_engine import DailyReportGenerator
+
+    summary = dict(pipeline_result.daily_summary_df or {})
+    summary.update({
+        "report_date": str(report_date),
+        "net_roi_pct": summary.get("portfolio_day_roi_pct", summary.get("portfolio_day_net_roi_pct", 0)),
+        "winning_strategies": summary.get("win_count", 0),
+        "losing_strategies": summary.get("loss_count", 0),
+        "total_capital_deployed": summary.get("peak_capital_deployed", summary.get("total_capital_deployed_peak", 0)),
+        "total_charges": summary.get("total_allocated_charges", summary.get("total_transaction_cost_drag", 0)),
+        "strategy_count": len(pipeline_result.strategy_runs_df) if pipeline_result.strategy_runs_df is not None else 0,
+    })
+    return DailyReportGenerator().render_daily_html(
+        daily_summary=summary,
+        strategy_runs_df=pipeline_result.strategy_runs_df,
+        matched_trades_df=getattr(pipeline_result, "matched_trades_df", None),
+        charges_df=pipeline_result.charges_df,
+        chart_divs={},
+        disclaimer_text="Trading involves risk. This report is for record keeping and is not investment advice.",
+    )
+
+
+def _build_report_pdf(html_str: str) -> tuple[bytes | None, str | None]:
+    import tempfile
+    from pathlib import Path
+    from src.report_engine import export_pdf_playwright
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pdf_path = Path(temp_dir) / "daily-report.pdf"
+        outcome = export_pdf_playwright(html_str, pdf_path)
+        if not outcome.get("success"):
+            return None, outcome.get("error", "PDF generation failed")
+        return pdf_path.read_bytes(), None
 
 def _save_to_db(pipeline_result, report_date) -> None:
     """Persist today's pipeline result to SQLite + Supabase."""
@@ -620,6 +707,23 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
     dhan_access_token = _secret("DHAN_ACCESS_TOKEN")
 
     report_date = st.session_state.get("report_date", date.today())
+    staging_df = staging_df.copy()
+    if "trade_date" not in staging_df.columns and "report_date" in staging_df.columns:
+        staging_df = staging_df.rename(columns={"report_date": "trade_date"})
+    if "strategy_run_id" not in staging_df.columns:
+        if "strategy_name" in staging_df.columns:
+            staging_df["strategy_run_id"] = pd.factorize(staging_df["strategy_name"].fillna("Manual Strategy"))[0] + 1
+        else:
+            staging_df["strategy_run_id"] = 1
+    staging_df["strategy_run_id"] = pd.to_numeric(staging_df["strategy_run_id"], errors="coerce").fillna(1).astype(int)
+    if "execution_price" not in staging_df.columns and "price" in staging_df.columns:
+        staging_df["execution_price"] = staging_df["price"]
+    import uuid as _uuid
+    strategy_uuid_by_id = {
+        run_id: str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"pnl-strategy:{report_date}:{run_id}"))
+        for run_id in staging_df["strategy_run_id"].unique()
+    }
+    staging_df["strategy_run_uuid"] = staging_df["strategy_run_id"].map(strategy_uuid_by_id)
 
     stage_labels = [
         "Stage 1: Source Ingestion",
@@ -641,6 +745,50 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
 
         status_text.text("Initialising database...")
         engine, SessionLocal = init_db("data/quant_desk.db")
+        existing_strategy_rows = []
+        existing_charge_rows = []
+        existing_execution_count = 0
+        if st.session_state.get("daily_write_mode", "Append new strategies") == "Append new strategies":
+            from src.db.schema import StrategyRun, ChargesBreakdown, TradeExecution
+            with SessionLocal() as existing_session:
+                existing_strategy_rows = [
+                    {column.name: getattr(row, column.name) for column in StrategyRun.__table__.columns}
+                    for row in existing_session.query(StrategyRun).filter_by(report_date=report_date).all()
+                ]
+                existing_charge_rows = [
+                    {column.name: getattr(row, column.name) for column in ChargesBreakdown.__table__.columns}
+                    for row in existing_session.query(ChargesBreakdown).filter_by(report_date=report_date).all()
+                ]
+                existing_execution_count = existing_session.query(TradeExecution).filter_by(report_date=report_date).count()
+            try:
+                from src.supabase_store import get_supabase_store
+                cloud_store = get_supabase_store()
+                if cloud_store.is_connected:
+                    cloud_runs = cloud_store.get_strategy_runs(start_date=report_date, end_date=report_date)
+                    if cloud_runs:
+                        existing_strategy_rows = cloud_runs
+                        existing_charge_rows = cloud_store.get_charges_breakdown(start_date=report_date, end_date=report_date)
+                        cloud_id_by_uuid = {row.get("strategy_run_uuid"): row.get("id") for row in cloud_runs}
+                        for charge_row in existing_charge_rows:
+                            charge_row["strategy_run_id"] = cloud_id_by_uuid.get(charge_row.get("strategy_run_uuid"))
+                        existing_execution_count = len(cloud_store.get_trade_executions(start_date=report_date, end_date=report_date))
+            except Exception:
+                pass
+        if existing_strategy_rows:
+            used_ids = sorted(staging_df["strategy_run_id"].unique().tolist())
+            existing_ids = [int(row.get("id", 0) or 0) for row in existing_strategy_rows]
+            first_new_id = max(existing_ids + [len(existing_strategy_rows)]) + 1
+            remap = {old_id: first_new_id + offset for offset, old_id in enumerate(used_ids)}
+            staging_df["strategy_run_id"] = staging_df["strategy_run_id"].map(remap)
+            extracted_cards = st.session_state.get("strategy_cards_extracted", [])
+            for card in extracted_cards:
+                card["strategy_run_id"] = remap.get(int(card.get("strategy_run_id", 1)), first_new_id)
+            st.session_state["strategy_cards_extracted"] = extracted_cards
+            strategy_uuid_by_id = {
+                run_id: str(_uuid.uuid5(_uuid.NAMESPACE_URL, f"pnl-strategy:{report_date}:{run_id}"))
+                for run_id in staging_df["strategy_run_id"].unique()
+            }
+            staging_df["strategy_run_uuid"] = staging_df["strategy_run_id"].map(strategy_uuid_by_id)
 
         orchestrator = DailyPipelineOrchestrator(
             db_engine=engine,
@@ -671,9 +819,29 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
         # Inject strategy cards extracted by Gemini into stage_3 dataframes
         # so stage_6 and stage_7 can compute capital-deployed ROI
         _sc_extracted = st.session_state.get("strategy_cards_extracted", [])
-        if _sc_extracted and "strategy_cards_df" not in s3.dataframes:
+        if _sc_extracted:
             import pandas as _pd2
-            s3.dataframes["strategy_cards_df"] = _pd2.DataFrame(_sc_extracted)
+            cards_df = _pd2.DataFrame(_sc_extracted)
+            if "strategy_run_id" not in cards_df.columns:
+                cards_df["strategy_run_id"] = range(1, len(cards_df) + 1)
+            cards_df["strategy_run_uuid"] = cards_df["strategy_run_id"].map(strategy_uuid_by_id)
+            s3.dataframes["strategy_cards_df"] = cards_df
+
+        cards_df = s3.dataframes.get("strategy_cards_df", _pd.DataFrame())
+        if cards_df is not None and not cards_df.empty:
+            cards_df = cards_df.copy()
+            if "strategy_run_id" not in cards_df.columns:
+                cards_df["strategy_run_id"] = range(1, len(cards_df) + 1)
+            if "strategy_run_uuid" not in cards_df.columns:
+                cards_df["strategy_run_uuid"] = cards_df["strategy_run_id"].map(strategy_uuid_by_id)
+            s3.dataframes["strategy_cards_df"] = cards_df
+            execs = s3.dataframes.get("trade_executions_df")
+            if execs is not None and not execs.empty and "strategy_run_id" not in execs.columns:
+                if len(cards_df) == 1:
+                    execs = execs.copy()
+                    execs["strategy_run_id"] = cards_df.iloc[0]["strategy_run_id"]
+                    execs["strategy_run_uuid"] = cards_df.iloc[0]["strategy_run_uuid"]
+                    s3.dataframes["trade_executions_df"] = execs
 
         # PATCH 1A: In manual mode, staging_df IS the trade_executions_df.
         # Stage_3 only merges Gemini-parsed strategy_cards; it never sets trade_executions_df.
@@ -696,7 +864,7 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
         strategies_df = s3.dataframes.get("strategy_cards_df", _pd.DataFrame())
         cn_charges = s2.dataframes.get("contract_note_charges")
         if cn_charges is None:
-            cn_charges = gemini_result.get("contract_note")
+            cn_charges = st.session_state.get("contract_note_extracted") or gemini_result.get("contract_note")
         s6 = orchestrator.stage_6_compute_charges(matched_df, strategies_df, contract_note_charges=cn_charges)
 
         # ── Stage 7 ──────────────────────────────────────────────
@@ -709,6 +877,8 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
             _sc_list = st.session_state.get("strategy_cards_extracted", [])
             if _sc_list:
                 strategies_df = _pd.DataFrame(_sc_list)
+            elif "strategy_name" in staging_df.columns:
+                strategies_df = staging_df.groupby("strategy_run_id", as_index=False).first()
             else:
                 strategies_df = _pd.DataFrame([{
                     "strategy_name": st.session_state.get("sc_name", "Manual Strategy"),
@@ -774,11 +944,26 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
                 "broker": strategies_df["broker"].iloc[0] if not strategies_df.empty and "broker" in strategies_df.columns else "Zerodha",
                 "deployment_status": "Exited",
             }])
+        if existing_strategy_rows:
+            prior_runs_df = pd.DataFrame(existing_strategy_rows)
+            prior_runs_df["strategy_run_id"] = prior_runs_df["id"]
+            prior_runs_df["multiplier"] = prior_runs_df.get("multiplier_x", 1)
+            prior_runs_df["counter"] = prior_runs_df.get("counter_int")
+            prior_runs_df["strategy_run_uuid"] = prior_runs_df.get("strategy_run_uuid")
+            strategy_runs_df = pd.concat([prior_runs_df, strategy_runs_df], ignore_index=True, sort=False)
+            from src.strategy_aggregator import compute_portfolio_day_summary
+            daily_summary_dict = compute_portfolio_day_summary(strategy_runs_df)
+            daily_summary_dict["total_strategy_runs"] = len(strategy_runs_df)
+            daily_summary_dict["total_trades_executed"] = existing_execution_count + len(matched_df)
+            if existing_charge_rows:
+                charges_df = pd.concat([pd.DataFrame(existing_charge_rows), charges_df], ignore_index=True, sort=False)
         tables = {
             "strategy_runs_df": strategy_runs_df,
             "daily_summary_dict": daily_summary_dict,
             "charges_df": charges_df,
             "matched_trades_df": matched_df,
+            "trade_executions_df": s4.dataframes.get("trade_executions_df", staging_df),
+            "replace_report": st.session_state.get("daily_write_mode") == "Replace saved report for this date",
         }
         s8 = orchestrator.stage_8_persist_sqlite(SessionLocal or engine, tables, report_date)
 
@@ -795,11 +980,14 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
             strategy_runs_df=strategy_runs_df,
             charges_df=charges_df,
             daily_summary_df=daily_summary_dict,
+            matched_trades_df=matched_df,
+            trade_executions_df=tables["trade_executions_df"],
         )
         result.all_passed = all(s.status in ("SUCCESS", "WARNING") for s in result.per_stage)
         result.report_ready = result.all_passed
 
         st.session_state["pipeline_result"] = result
+        st.session_state["pipeline_executed"] = True
         st.session_state["pipeline_complete"] = True
 
         # Populate audit session_state
@@ -838,6 +1026,15 @@ def _run_real_pipeline(staging_df, gemini_result: dict | None = None) -> None:
 
     except Exception as exc:
         import traceback as _tb
+        try:
+            from src.pnl_pipeline import PipelineResult, StageResult
+            failed_result = PipelineResult(per_stage=[StageResult(
+                stage_name="pipeline_execution", status="FAIL", errors=[str(exc)]
+            )])
+            st.session_state["pipeline_result"] = failed_result
+            st.session_state["pipeline_executed"] = True
+        except Exception:
+            pass
         status_text.error(f"Pipeline error: {exc}")
         st.error(f"❌ **Pipeline Execution Crashed**: {exc}")
         with st.expander("Full Traceback — click to expand"):

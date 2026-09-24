@@ -26,7 +26,7 @@ def _q(x: float | int | Decimal) -> float:
 
 CHARGE_METHODOLOGY_FORMULA = (
     "FORMULA computed per Zerodha schedule effective 2026-04-01 "
-    "(STT 0.1% on sell premium, Brokerage ₹20 flat per executed order, "
+    "(STT 0.15% on sell premium, rounded to nearest rupee; Brokerage ₹20 flat per executed order, "
     "NSE 0.03553% / BSE 0.0325% exchange turnover, SEBI ₹10/crore, "
     "Stamp 0.003% buy-side only, GST 18% on broker+exchange+SEBI)."
 )
@@ -39,7 +39,7 @@ DEFAULT_SCHEDULE_DICT: Dict[str, float] = {
     "broker_name": "ZERODHA",
     "effective_date": "2026-04-01",
     "brokerage_per_order_inr": 20.0,
-    "stt_option_sell_premium_pct": 0.001,
+    "stt_option_sell_premium_pct": 0.0015,
     "nse_exchange_option_pct": 0.0003553,
     "bse_exchange_option_pct": 0.000325,
     "sebi_fee_per_crore_inr": 10.0,
@@ -81,7 +81,7 @@ class FOCostCalculator:
     Total is always reconciled byte-for-byte against screenshot.
 
     Mode B (Zerodha FORMULA — fallback): Calculate per-leg round-trip costs
-    using the public Zerodha / NSE / BSE / SEBI fee schedule (STT 0.1% sell-only
+    using the public Zerodha / NSE / BSE / SEBI fee schedule (STT 0.15% sell-only
     sell-premium rule: NOT 0.15% from earlier superseded drafts).
     """
 
@@ -170,11 +170,8 @@ class FOCostCalculator:
         brokerage = brokerage_flat * int(orders_per_single_leg_roundtrip)
 
         stt_pct = float(s["stt_option_sell_premium_pct"])
-        assert stt_pct <= 0.001 + 1e-9, (
-            f"CRITICAL FORMULA DRIFT: STT pct {stt_pct} exceeds 0.1% allowed upper bound. "
-            f"Unified spec mandates STT=0.001 (0.1%) sell-premium FORMULA rate."
-        )
-        stt = stt_pct * sell_premium  # sell-side only
+        stt_raw = stt_pct * sell_premium  # sell-side option premium only
+        stt = float(Decimal(str(stt_raw)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
         if exchange.upper() == "BSE":
             exch_pct = float(s["bse_exchange_option_pct"])

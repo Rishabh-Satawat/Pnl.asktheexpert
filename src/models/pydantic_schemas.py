@@ -394,7 +394,7 @@ class BrokerChargeSchedule(_BaseRupeeModel):
     broker_name: str = "ZERODHA"
     effective_date: date
     brokerage_per_order_inr: float = 20.0
-    stt_option_sell_premium_pct: float = 0.001
+    stt_option_sell_premium_pct: float = 0.0015
     nse_exchange_option_pct: float = 0.0003553
     bse_exchange_option_pct: float = 0.000325
     sebi_fee_per_crore_inr: float = 10.0

@@ -156,8 +156,8 @@ P&L (SHORT): (₹210 - ₹180) × 20 = ₹600.00 gross
 **1. Brokerage:** ₹20 per executed order × 2 orders = **₹40.00**
 
 **2. STT (Securities Transaction Tax):**
-   - Applied to SELL-side premium only: ₹3,200 × 0.1% = **₹3.20**
-   - CRITICAL: Rate is 0.001 (0.1%), NOT 0.0015 (0.15%)
+   - Formula estimate applies to SELL-side option premium only: ₹3,200 × 0.15% = ₹4.80, rounded to the nearest rupee: **₹5.00**
+   - Published Zerodha rate is 0.15% from 2026-04-01. An actual Zerodha Virtual Contract Note always overrides formula estimates.
 
 **3. Exchange Turnover Fee (BSE 0.0325%):**
    - Total premium turnover = ₹3,800 + ₹3,200 = ₹7,000
@@ -376,3 +376,31 @@ python -m playwright install chromium --with-deps
 **Document Version:** 1.0  
 **Generated:** 2026-09-22  
 **Status:** PRODUCTION-GRADE HANDOVER READY FOR SPARK AI DEPLOYMENT
+
+---
+
+## 8. RELIABILITY BUILD HANDOVER — 2026-09-24
+
+### Current implementation
+
+- Manual trade entry supports additional strategy blocks for the same trading date. Entries carry a strategy run ID through matching, charges, aggregation, and persistence.
+- CSV `report_date` input is normalized to `trade_date`; manual executions are routed as executions instead of being mistaken for strategy cards.
+- Results render from `st.session_state["pipeline_result"]` while `st.session_state["pipeline_executed"]` is true, including after tab changes and Streamlit reruns.
+- Same-date processing defaults to append. Existing saved strategy totals and charges are combined; replacing a date requires choosing the explicit replace option.
+- SQLite persistence now updates the date-keyed daily summary, uses stable strategy/execution IDs, and stores raw execution legs. Supabase payloads include mapped UUIDs and current summary aliases.
+- HTML and PDF exports call the report generator’s actual interface. PDF uses Playwright Chromium, with installed Chrome/Edge as a Windows fallback; the Streamlit startup installer now records success only after a successful browser download.
+- Formula STT uses the published Zerodha 0.15% sell-side option premium rate, rounded to the nearest rupee. Realized contract-note totals take precedence.
+
+### Data safety and verification
+
+- Pre-change SQLite backup: `data/quant_desk.db.pre-codex-20260924.bak` (151,552 bytes; SHA-256 `9EF17D45B782C554533222C83636920BF258981876F60A4705317C038C523C89`).
+- The four-leg SENSEX regression reproduction passes: 4 execution rows, 2 matched trades, ₹1,869 gross P&L, no unmatched legs.
+- Latest full verification run: 57 passed, 0 skipped. The four-leg regression also passes with 4 execution rows, 2 matched trades, no unmatched legs, and ₹1,869 gross P&L.
+- HTML export smoke: PASS. PDF export smoke using installed Windows browser: PASS (17,233-byte PDF).
+- Continue developing on `codex/reliability-reporting`; merge into `main` and push only after the full suite passes and the final diff contains only intended project files.
+
+### Notes for the next coding session
+
+- Start with this section and the git history for the reliability build. Keep local secrets, `.dbg/`, the SQLite backup, and pre-existing debug notes out of commits.
+- After deployment, verify a multi-strategy same-date batch, append one additional strategy to that date, open every Results tab, save, then download HTML and PDF.
+- Confirm the Streamlit Cloud Supabase credentials and schema are available before treating hosted persistence as verified. This local run did not verify a live Supabase transaction.

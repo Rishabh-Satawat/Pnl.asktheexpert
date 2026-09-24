@@ -118,14 +118,17 @@ def seed_market_knowledge(session: Session, effective: date = date(2026, 4, 1)) 
 def seed_broker_charge_schedule(session: Session, effective: date = date(2026, 4, 1)) -> None:
     existing = session.query(BrokerChargeSchedule).filter(
         BrokerChargeSchedule.broker_name == "ZERODHA"
-    ).count()
-    if existing > 0:
+    ).one_or_none()
+    if existing is not None:
+        if existing.stt_option_sell_premium_pct == 0.001:
+            existing.stt_option_sell_premium_pct = 0.0015
+            existing.notes = "Zerodha charge schedule effective 2026-04-01. STT=0.15% on sell-side option premium. Realized Virtual Contract Note charges override estimates."
         return
     seed = BrokerChargeSchedule(
         broker_name="ZERODHA",
         effective_date=effective,
         brokerage_per_order_inr=20.0,
-        stt_option_sell_premium_pct=0.001,
+        stt_option_sell_premium_pct=0.0015,
         nse_exchange_option_pct=0.0003553,
         bse_exchange_option_pct=0.000325,
         sebi_fee_per_crore_inr=10.0,
@@ -134,7 +137,7 @@ def seed_broker_charge_schedule(session: Session, effective: date = date(2026, 4
         default_slippage_per_point_inr=0.10,
         ipft_per_crore_inr=1.0,
         is_default=True,
-        notes="Zerodha discount broker FORMULA schedule effective 2026-04-01. STT=0.1% on sell-side option premium. REALIZED values from Zerodha Virtual Contract Note always override when present.",
+        notes="Zerodha discount broker FORMULA schedule effective 2026-04-01. STT=0.15% on sell-side option premium. REALIZED values from Zerodha Virtual Contract Note always override when present.",
     )
     session.add(seed)
 

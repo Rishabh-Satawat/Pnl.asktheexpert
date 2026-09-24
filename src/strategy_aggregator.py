@@ -71,6 +71,7 @@ def aggregate_strategy_runs(
     # Ensure output column order
     out_cols = [
         "strategy_run_id", "strategy_name", "deployment_status",
+        "strategy_run_uuid",
         "multiplier", "counter", "capital_deployed_allocated",
         "entry_ts", "exit_ts", "underlying_segment",
         "booked_gross_pnl", "allocated_charges_total",

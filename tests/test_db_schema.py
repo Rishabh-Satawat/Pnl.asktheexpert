@@ -48,7 +48,7 @@ def seeded_engine(tmp_path_factory):
 
 
 def test_init_db_creates_8_tables(seeded_engine):
-    """TR-1.1: All 8 tables created cleanly; seed market_knowledge count=8; broker_charge_schedule count=1 Zerodha STT=0.001 (AC-6)."""
+    """TR-1.1: All 8 tables and market seeds create; Zerodha STT schedule is 0.0015."""
     engine, SessionLocal = seeded_engine
     with engine.connect() as conn:
         rs = conn.execute(text(
@@ -85,9 +85,8 @@ def test_init_db_creates_8_tables(seeded_engine):
         z = s.query(BrokerChargeSchedule).filter(BrokerChargeSchedule.broker_name == "ZERODHA").one()
         assert z.is_default is True
         assert z.brokerage_per_order_inr == 20.0, f"Zerodha brokerage per order must be ₹20, got {z.brokerage_per_order_inr}"
-        assert z.stt_option_sell_premium_pct == 0.001, (
-            f"CRITICAL: STT must be 0.001 (0.1%) sell-premium FORMULA rate. Got {z.stt_option_sell_premium_pct}. "
-            f"Spec explicitly supersedes old 0.15% / 0.0015 draft value."
+        assert z.stt_option_sell_premium_pct == 0.0015, (
+            f"Zerodha formula STT must be 0.15% on sell-premium. Got {z.stt_option_sell_premium_pct}."
         )
         assert z.nse_exchange_option_pct == 0.0003553
         assert z.bse_exchange_option_pct == 0.000325

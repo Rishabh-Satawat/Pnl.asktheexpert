@@ -31,7 +31,7 @@ def _read_golden_fixture():
 
 class TestCostCalculatorGoldenFixture:
     def test_sensex_bull_call_leg_roundtrip(self, calc):
-        """AC-1 / TR-3.1: Golden Fixture (Critical STT=2.40 NOT 3.60 test — proves new 0.1% rate vs superseded 0.15%)."""
+        """Zerodha published STT rate: 0.15% of sell premium, rounded to nearest rupee."""
         g = _read_golden_fixture()
         res = calc.calculate_option_roundtrip_costs_formula(
             buy_price=float(g.buy_price),
@@ -50,7 +50,7 @@ class TestCostCalculatorGoldenFixture:
         print(f"  sell_premium        = {res['sell_premium']:.2f}")
         print(f"  total_turnover      = {res['total_premium_turnover']:.2f}")
         print(f"  brokerage           = {ch['brokerage']:.2f}  (expected {g.brokerage_expected:.2f})")
-        print(f"  stt                 = {ch['stt']:.2f}  (expected {g.stt_expected:.2f}) -- THIS IS THE SUPERSEDE TEST: 0.1% = 2.40, NOT old 0.15% = 3.60")
+        print(f"  stt                 = {ch['stt']:.2f}  (expected {g.stt_expected:.2f})")
         print(f"  stamp_duty          = {ch['stamp_duty']:.2f}  (expected {g.stamp_expected:.2f})")
         print(f"  exchange_turnover   = {ch['exchange_turnover_fee']:.2f}")
         print(f"  sebi_turnover       = {ch['sebi_turnover_charges']:.2f}")
@@ -65,13 +65,9 @@ class TestCostCalculatorGoldenFixture:
         assert ch["brokerage"] == pytest.approx(40.0, abs=0.005), (
             "1 round-trip leg = 2 orders x INR-20 flat per order = INR-40 (Zerodha flat discount brokerage)"
         )
-        # SUPERSEDE TEST: STT must be 2.40 (0.1% of 2400), NOT 3.60 (superseded 0.15% draft)
-        hand_stt = (qty * float(g.sell_price)) * 0.001
-        assert hand_stt == pytest.approx(2.40, abs=0.005)
-        assert ch["stt"] == pytest.approx(2.40, abs=0.005), (
-            f"STT is the critical spec update. Expected 0.1%x sell_premium={hand_stt:.2f}=2.40. "
-            f"Got {ch['stt']:.4f}. If this is ~3.60 then the superseded 0.15% STT draft was not removed."
-        )
+        hand_stt = round(qty * float(g.sell_price) * 0.0015)
+        assert hand_stt == 4
+        assert ch["stt"] == pytest.approx(4.0, abs=0.005)
         hand_stamp = (qty * float(g.buy_price)) * 3e-5  # buy-premium only
         assert hand_stamp == pytest.approx(0.06, abs=0.005)
         assert ch["stamp_duty"] == pytest.approx(0.06, abs=0.005)
@@ -85,17 +81,17 @@ class TestCostCalculatorGoldenFixture:
         )
         # Methodology tag correct
         assert "FORMULA computed per Zerodha" in res["methodology_note"]
-        assert "STT 0.1%" in res["methodology_note"]
+        assert "STT 0.15%" in res["methodology_note"]
 
     def test_nifty_nse_25_lot_buy_150_sell_180(self, calc):
-        """NIFTY NSE test: buy=150 sell=180 lot_size=25 -> gross=750; stt=25*180*0.001=4.50."""
+        """NIFTY NSE STT uses 0.15% of sell premium, rounded to nearest rupee."""
         res = calc.calculate_option_roundtrip_costs_formula(
             buy_price=150.0, sell_price=180.0, lot_size=25, lots=1, exchange="NSE",
         )
         ch = res["charges"]
         assert res["pnl"]["gross_pnl_leg"] == pytest.approx((180-150)*25, abs=0.01), "gross=points*qty"
         assert ch["brokerage"] == pytest.approx(40.0, abs=0.005)
-        assert ch["stt"] == pytest.approx(25 * 180 * 0.001, abs=0.005), "STT 0.1% on sell premium"
+        assert ch["stt"] == pytest.approx(7.0, abs=0.005), "STT rounds ₹6.75 to ₹7"
         # NSE exchange rate != BSE rate → must be different values
         sensex = calc.calculate_option_roundtrip_costs_formula(
             buy_price=150.0, sell_price=180.0, lot_size=25, lots=1, exchange="BSE",

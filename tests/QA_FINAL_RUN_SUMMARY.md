@@ -1,14 +1,14 @@
 # QA Final Run Summary
 
-**Date**: 2026-09-20
+**Date**: 2026-09-24
 **Platform**: Windows 11, Python 3.14.7
 **Project**: Private Quant Desk P&L Engine v1.0
 
 ## pytest Results
 
 - **Collected**: 57 tests
-- **Passed**: 55
-- **Skipped**: 2 (xlsxwriter + playwright not installed — install via `pip install xlsxwriter` and `playwright install chromium`)
+- **Passed**: 57
+- **Skipped**: 0
 - **Failed**: 0
 - **Exit Code**: 0
 
@@ -16,7 +16,7 @@
 
 | AC | Description | Status | Evidence |
 |----|------------|--------|----------|
-| AC-1 | Golden fixture STT=0.1% (2.40 not 3.60) | PASS | test_cost_calculator::test_sensex_bull_call_leg_roundtrip |
+| AC-1 | Zerodha formula STT=0.15% of sell premium, rounded to nearest rupee | PASS | test_cost_calculator::test_sensex_bull_call_leg_roundtrip |
 | AC-2 | Realized contract note override exact | PASS | test_cost_calculator::test_realized_contract_note_overrides_formula_exact |
 | AC-3 | 4 margin archetypes + Long=premium only | PASS | test_margin_calculator (5 tests) |
 | AC-4 | 15+ symbol parse vectors 100% | PASS | test_symbol_parser::test_tr_4_1_fifteen_vectors_ac4 |

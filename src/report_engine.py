@@ -464,7 +464,19 @@ def export_pdf_playwright(
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            try:
+                browser = p.chromium.launch(headless=True)
+            except Exception as bundled_error:
+                browser = None
+                if os.name == "nt":
+                    for installed_channel in ("msedge", "chrome"):
+                        try:
+                            browser = p.chromium.launch(channel=installed_channel, headless=True)
+                            break
+                        except Exception:
+                            continue
+                if browser is None:
+                    raise bundled_error
             page = browser.new_page()
             page.set_content(html_str, wait_until="networkidle")
             page.pdf(

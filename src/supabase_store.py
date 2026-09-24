@@ -96,6 +96,19 @@ class SupabaseStore:
     def is_connected(self) -> bool:
         return self._client is not None
 
+    def delete_daily_batch(self, report_date: Any) -> bool:
+        """Remove one date's report children and summary for an explicit replace."""
+        if not self.is_connected:
+            return False
+        try:
+            report_date_str = _date_str(report_date)
+            for table_name in ("charges_breakdown", "trade_executions", "strategy_runs", "daily_summaries"):
+                self._client.table(table_name).delete().eq("report_date", report_date_str).execute()
+            return True
+        except Exception as exc:
+            logger.error("SupabaseStore.delete_daily_batch failed: %s", exc)
+            return False
+
     # ------------------------------------------------------------------
     # UPSERT helpers
     # ------------------------------------------------------------------
@@ -111,13 +124,13 @@ class SupabaseStore:
                 "total_strategy_runs": int(summary.get("total_strategy_runs", 0)),
                 "win_count": int(summary.get("win_count", 0)),
                 "loss_count": int(summary.get("loss_count", 0)),
-                "total_capital_deployed_peak": float(summary.get("total_capital_deployed_peak", 0)),
+                "total_capital_deployed_peak": float(summary.get("total_capital_deployed_peak", summary.get("peak_capital_deployed", 0))),
                 "total_gross_pnl": float(summary.get("total_gross_pnl", 0)),
-                "total_transaction_cost_drag": float(summary.get("total_transaction_cost_drag", 0)),
+                "total_transaction_cost_drag": float(summary.get("total_transaction_cost_drag", summary.get("total_allocated_charges", 0))),
                 "total_net_pnl": float(summary.get("total_net_pnl", 0)),
                 "portfolio_day_net_roi_pct": (
-                    float(summary["portfolio_day_net_roi_pct"])
-                    if summary.get("portfolio_day_net_roi_pct") is not None
+                    float(summary.get("portfolio_day_net_roi_pct", summary.get("portfolio_day_roi_pct")))
+                    if summary.get("portfolio_day_net_roi_pct", summary.get("portfolio_day_roi_pct")) is not None
                     else None
                 ),
                 "segment_breakdown": _to_json_safe(summary.get("segment_breakdown")),
@@ -139,7 +152,7 @@ class SupabaseStore:
             rows = []
             for r in runs:
                 rows.append({
-                    "strategy_run_uuid": r.get("strategy_run_uuid"),
+                    "strategy_run_uuid": r.get("strategy_run_uuid") or str(__import__("uuid").uuid5(__import__("uuid").NAMESPACE_URL, f"pnl:{_date_str(report_date)}:{r.get('strategy_run_id', 0)}")),
                     "report_date": _date_str(report_date),
                     "strategy_name": str(r.get("strategy_name", "")),
                     "deployment_status": str(r.get("deployment_status", "EXITED")),
@@ -172,9 +185,16 @@ class SupabaseStore:
             import uuid
             rows = []
             for c in charges:
+                charge_uuid = str(c.get("id") or uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    "pnl-charge:{}:{}:{}:{}:{}:{}".format(
+                        _date_str(report_date), c.get("strategy_run_uuid"), c.get("charge_source"),
+                        c.get("trade_match_key"), c.get("total_charges"), c.get("stt"),
+                    ),
+                ))
                 rows.append({
-                    "id": str(c.get("id", uuid.uuid4())),
-                    "strategy_run_uuid": c.get("strategy_run_uuid") or c.get("strategy_run_id"),
+                    "id": charge_uuid,
+                    "strategy_run_uuid": c.get("strategy_run_uuid"),
                     "report_date": _date_str(report_date),
                     "charge_source": str(c.get("charge_source", "FORMULA_COMPUTED")),
                     "brokerage": float(c.get("brokerage", 0)),
