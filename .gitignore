@@ -25,6 +25,7 @@ venv/
 ENV/
 data/*.db
 data/*.db-journal
+data/*.bak
 data/cache/*.parquet
 data/cache/*.tmp
 ui/branding/logo*
